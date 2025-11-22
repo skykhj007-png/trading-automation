@@ -1,0 +1,66 @@
+{
+  "exchange": {
+    "name": "upbit",
+    "apiKey": "",
+    "secretKey": "",
+    "baseUrl": "https://api.upbit.com/v1"
+  },
+  "trading": {
+    "market": "KRW-BTC",
+    "orderAmount": 10000,
+    "stopLossPercent": -5,
+    "takeProfitPercent": 10,
+    "maxPositions": 3,
+    "riskPerTrade": 2
+  },
+  "strategy": {
+    "type": "moving_average",
+    "shortPeriod": 5,
+    "longPeriod": 20,
+    "rsiPeriod": 14,
+    "rsiOverbought": 70,
+    "rsiOversold": 30
+  },
+  "notification": {
+    "enabled": true,
+    "email": "",
+    "telegram": {
+      "botToken": "",
+      "chatId": ""
+    }
+  },
+  "logging": {
+    "sheetName": "TradingLog",
+    "enabled": true,
+    "logLevel": "info"
+  },
+  "schedule": {
+    "priceCheckInterval": 1,
+    "stopLossCheckInterval": 5,
+    "portfolioUpdateInterval": 60
+  },
+  "markets": [
+    {
+      "symbol": "KRW-BTC",
+      "enabled": true,
+      "orderAmount": 10000
+    },
+    {
+      "symbol": "KRW-ETH",
+      "enabled": false,
+      "orderAmount": 5000
+    },
+    {
+      "symbol": "KRW-XRP",
+      "enabled": false,
+      "orderAmount": 3000
+    }
+  ],
+  "advanced": {
+    "useTrailingStop": false,
+    "trailingStopPercent": 3,
+    "usePartialProfit": false,
+    "partialProfitPercent": 50,
+    "partialProfitTrigger": 5
+  }
+}

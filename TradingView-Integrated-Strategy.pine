@@ -1,0 +1,401 @@
+//@version=5
+indicator("통합 전략 (불장단타왕 + 클로드21)", overlay=true, max_labels_count=100)
+
+// ============================================
+// 설정
+// ============================================
+
+// 레버리지 및 포지션 관리
+leverageInput = input.int(5, title="레버리지", minval=1, maxval=20)
+riskPercentInput = input.float(20.0, title="투입 비율 (%)", minval=1.0, maxval=100.0)
+
+// 손익 설정 (클로드21 기준 - 단타)
+tpPct1 = input.float(0.8, title="TP1 수익률 (%)", minval=0.1, maxval=5.0, step=0.1)
+tpPct2 = input.float(1.5, title="TP2 수익률 (%)", minval=0.1, maxval=5.0, step=0.1)
+slPct = input.float(0.3, title="손절 비율 (%)", minval=0.05, maxval=2.0, step=0.05)
+
+// 신호 강도 설정
+minSignalStrength = input.int(12, title="최소 신호 강도", minval=8, maxval=20, tooltip="높을수록 보수적, 낮을수록 공격적")
+strictMode = input.bool(true, title="엄격 모드", tooltip="모든 조건 만족 필요")
+
+// 멀티타임프레임 활성화
+useMultiTF = input.bool(true, title="멀티타임프레임 필터 사용")
+
+// ============================================
+// 불장단타왕 전략 - VWAP 및 이동평균
+// ============================================
+
+// VWAP 100 계산 (거래량 가중 이동평균)
+vwap100 = ta.vwma(close, 100)
+
+// 다중 이동평균선
+ma7 = ta.sma(close, 7)
+ma15 = ta.sma(close, 15)
+ma50 = ta.sma(close, 50)
+ma100 = ta.sma(close, 100)
+ma200 = ta.sma(close, 200)
+ma400 = ta.sma(close, 400)
+
+// 볼륨 프로파일 POC는 Pine Script에서 직접 계산 어려움 - 근사값 사용
+// 최근 100개 봉의 최대 거래량 발생 가격
+var float pocPrice = close
+var float maxVolume = 0
+for i = 0 to 99
+    if volume[i] > maxVolume
+        maxVolume := volume[i]
+        pocPrice := close[i]
+
+// ============================================
+// 불장단타왕 점수 계산 (최대 10점)
+// ============================================
+
+var float bulJangScore = 0
+bulJangScore := 0
+
+// 1. VWAP 100 터치 (3점)
+touchingVWAP = math.abs(close - vwap100) / vwap100 < 0.01  // 1% 이내
+if touchingVWAP
+    bulJangScore += 3
+
+// 2. 터닝 포인트 감지 (5점)
+// - 이평선 기울기 완만
+ma50_slope = ma50 - ma50[5]
+ma100_slope = vwap100 - vwap100[5]
+ma50_gentle = math.abs(ma50_slope) < close * 0.01
+vwap_gentle = math.abs(ma100_slope) < close * 0.01
+
+// - 최근 상승 추세
+upCount = 0
+for i = 0 to 4
+    if close[i] > close[i + 1]
+        upCount += 1
+
+recentUptrend = upCount >= 3
+
+// - VWAP 골든크로스
+vwapGoldenCross = ta.crossover(close, vwap100)
+
+turningPoint = (ma50_gentle or vwap_gentle) and recentUptrend
+if turningPoint
+    bulJangScore += 5
+
+if vwapGoldenCross
+    bulJangScore += 2  // 추가 점수
+
+// 3. 정배열 확인 (2점)
+isUptrend = ma7 > ma15 and ma15 > ma50
+if isUptrend
+    bulJangScore += 2
+
+// ============================================
+// 클로드21 멀티타임프레임 전략
+// ============================================
+
+// 15분봉 - 주요 트렌드
+ema20_15m = request.security(syminfo.tickerid, "15", ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+ema50_15m = request.security(syminfo.tickerid, "15", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+rsi_15m = request.security(syminfo.tickerid, "15", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
+
+trend_15m_bullish = ema20_15m > ema50_15m and rsi_15m > 45 and rsi_15m < 70
+trend_15m_bearish = ema20_15m < ema50_15m and rsi_15m > 30 and rsi_15m < 55
+
+// 5분봉 - 중간 트렌드
+ema20_5m = request.security(syminfo.tickerid, "5", ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+ema50_5m = request.security(syminfo.tickerid, "5", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+[macdLine_5m, signalLine_5m, histogram_5m] = request.security(syminfo.tickerid, "5", ta.macd(close, 12, 26, 9), lookahead=barmerge.lookahead_off)
+rsi_5m = request.security(syminfo.tickerid, "5", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
+
+macd_rising_5m = macdLine_5m > macdLine_5m[1]
+trend_5m_bullish = ema20_5m > ema50_5m and macd_rising_5m and rsi_5m > 40
+trend_5m_bearish = ema20_5m < ema50_5m and not macd_rising_5m and rsi_5m < 60
+
+// 3분봉 - 진입 신호
+ema20_3m = request.security(syminfo.tickerid, "3", ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+ema50_3m = request.security(syminfo.tickerid, "3", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+[macdLine_3m, signalLine_3m, histogram_3m] = request.security(syminfo.tickerid, "3", ta.macd(close, 12, 26, 9), lookahead=barmerge.lookahead_off)
+
+signal_3m_long = ta.crossover(ema20_3m, ema50_3m) and macdLine_3m > signalLine_3m
+signal_3m_short = ta.crossunder(ema20_3m, ema50_3m) and macdLine_3m < signalLine_3m
+
+// 1분봉 - 현재 차트 보조
+rsi_1m = ta.rsi(close, 14)
+vwma_1m = ta.vwma(close, 20)
+
+// ============================================
+// 클로드21 점수 계산 (최대 8점)
+// ============================================
+
+var float claude21Score = 0
+claude21Score := 0
+
+// 기본 신호 (3점)
+longSignal_basic = signal_3m_long and rsi_1m > 35 and rsi_1m < 65 and close > vwma_1m
+shortSignal_basic = signal_3m_short and rsi_1m > 35 and rsi_1m < 65 and close < vwma_1m
+
+if longSignal_basic
+    claude21Score += 3
+if shortSignal_basic
+    claude21Score += 3
+
+// 15분봉 트렌드 (3점)
+if trend_15m_bullish and longSignal_basic
+    claude21Score += 3
+if trend_15m_bearish and shortSignal_basic
+    claude21Score += 3
+
+// 5분봉 트렌드 (2점)
+if trend_5m_bullish and longSignal_basic
+    claude21Score += 2
+if trend_5m_bearish and shortSignal_basic
+    claude21Score += 2
+
+// ============================================
+// 추가 필터 점수 (최대 6점)
+// ============================================
+
+var float filterScore = 0
+filterScore := 0
+
+// 1. 평균 회귀 체크 (2점)
+deviation = (close - vwap100) / vwap100 * 100
+meanReversionOK = math.abs(deviation) < 10  // ±10% 이내
+if meanReversionOK
+    filterScore += 2
+
+// 2. POC 근처 (2점)
+nearPOC = math.abs(close - pocPrice) / pocPrice < 0.02  // ±2% 이내
+if nearPOC
+    filterScore += 2
+
+// 3. 200선 위 (2점)
+above200MA = close > ma200
+if above200MA
+    filterScore += 2
+
+// ============================================
+// 최종 신호 결정
+// ============================================
+
+var float totalScore = 0
+totalScore := bulJangScore + claude21Score + filterScore
+
+// LONG 신호: 불장단타왕 + 클로드21 모두 동의
+longSignal_final = bulJangScore >= 5 and longSignal_basic and totalScore >= minSignalStrength
+
+// SHORT 신호: 클로드21 SHORT + 불장단타왕 역배열
+shortSignal_final = shortSignal_basic and not isUptrend and close < ma200 and totalScore >= minSignalStrength
+
+// 엄격 모드 추가 필터링
+if strictMode and useMultiTF
+    longSignal_final := longSignal_final and trend_15m_bullish and trend_5m_bullish
+    shortSignal_final := shortSignal_final and trend_15m_bearish and trend_5m_bearish
+
+// ============================================
+// 차트 표시
+// ============================================
+
+// VWAP 및 주요 이동평균선
+plot(vwap100, color=color.new(color.purple, 0), linewidth=3, title="VWAP 100")
+plot(ma50, color=color.new(color.orange, 0), linewidth=2, title="MA 50")
+plot(ma200, color=color.new(color.blue, 0), linewidth=2, title="MA 200")
+
+// 15분봉 EMA (참고용)
+plot(ema20_15m, color=color.new(color.green, 50), linewidth=1, title="EMA20 (15m)")
+plot(ema50_15m, color=color.new(color.red, 50), linewidth=1, title="EMA50 (15m)")
+
+// 신호 표시
+plotshape(longSignal_final, style=shape.triangleup, location=location.belowbar,
+         color=color.new(color.green, 0), size=size.normal, title="통합 LONG")
+plotshape(shortSignal_final, style=shape.triangledown, location=location.abovebar,
+         color=color.new(color.red, 0), size=size.normal, title="통합 SHORT")
+
+// 약한 신호 (필터링됨)
+plotshape(longSignal_basic and not longSignal_final, style=shape.circle, location=location.belowbar,
+         color=color.new(color.gray, 50), size=size.tiny, title="약한 LONG")
+plotshape(shortSignal_basic and not shortSignal_final, style=shape.circle, location=location.abovebar,
+         color=color.new(color.gray, 50), size=size.tiny, title="약한 SHORT")
+
+// ============================================
+// 신호 발생 시 TP/SL 표시
+// ============================================
+
+var label signalLabel = na
+var line tp1Line = na
+var line tp2Line = na
+var line slLine = na
+
+if longSignal_final
+    if not na(signalLabel)
+        label.delete(signalLabel)
+    if not na(tp1Line)
+        line.delete(tp1Line)
+    if not na(tp2Line)
+        line.delete(tp2Line)
+    if not na(slLine)
+        line.delete(slLine)
+
+    float labelTp1 = close * (1 + tpPct1/100)
+    float labelTp2 = close * (1 + tpPct2/100)
+    float labelSl = close * (1 - slPct/100)
+
+    signalLabel := label.new(bar_index, low - (high - low) * 0.3,
+                          text="🔥 통합 LONG\n" +
+                               "진입: $" + str.tostring(close, "#.##") + "\n" +
+                               "점수: " + str.tostring(totalScore, "#.#") + "/" + str.tostring(minSignalStrength) + "\n" +
+                               "━━━━━━━━━━━━\n" +
+                               "불장: " + str.tostring(bulJangScore, "#") + "/10 " +
+                               (touchingVWAP ? "✅V " : "") +
+                               (turningPoint ? "✅T " : "") +
+                               (isUptrend ? "✅정 " : "") + "\n" +
+                               "클로드: " + str.tostring(claude21Score, "#") + "/8 " +
+                               (trend_15m_bullish ? "✅15 " : "") +
+                               (trend_5m_bullish ? "✅5 " : "") + "\n" +
+                               "필터: " + str.tostring(filterScore, "#") + "/6 " +
+                               (meanReversionOK ? "✅회귀 " : "") +
+                               (above200MA ? "✅200 " : "") + "\n" +
+                               "━━━━━━━━━━━━\n" +
+                               "TP1: $" + str.tostring(labelTp1, "#.##") + " (50%)\n" +
+                               "TP2: $" + str.tostring(labelTp2, "#.##") + " (50%)\n" +
+                               "SL: $" + str.tostring(labelSl, "#.##"),
+                          style=label.style_label_up,
+                          color=color.new(color.green, 20),
+                          textcolor=color.white, size=size.normal)
+
+    tp1Line := line.new(bar_index, labelTp1, bar_index + 20, labelTp1,
+                       color=color.new(color.green, 0), width=2, style=line.style_dashed)
+    tp2Line := line.new(bar_index, labelTp2, bar_index + 20, labelTp2,
+                       color=color.new(color.green, 0), width=3, style=line.style_solid)
+    slLine := line.new(bar_index, labelSl, bar_index + 20, labelSl,
+                      color=color.new(color.red, 0), width=2, style=line.style_solid)
+
+if shortSignal_final
+    if not na(signalLabel)
+        label.delete(signalLabel)
+    if not na(tp1Line)
+        line.delete(tp1Line)
+    if not na(tp2Line)
+        line.delete(tp2Line)
+    if not na(slLine)
+        line.delete(slLine)
+
+    float labelTp1 = close * (1 - tpPct1/100)
+    float labelTp2 = close * (1 - tpPct2/100)
+    float labelSl = close * (1 + slPct/100)
+
+    signalLabel := label.new(bar_index, high + (high - low) * 0.3,
+                          text="🔥 통합 SHORT\n" +
+                               "진입: $" + str.tostring(close, "#.##") + "\n" +
+                               "점수: " + str.tostring(totalScore, "#.#") + "/" + str.tostring(minSignalStrength) + "\n" +
+                               "━━━━━━━━━━━━\n" +
+                               "불장: " + str.tostring(bulJangScore, "#") + "/10\n" +
+                               "클로드: " + str.tostring(claude21Score, "#") + "/8\n" +
+                               "필터: " + str.tostring(filterScore, "#") + "/6\n" +
+                               "━━━━━━━━━━━━\n" +
+                               "TP1: $" + str.tostring(labelTp1, "#.##") + " (50%)\n" +
+                               "TP2: $" + str.tostring(labelTp2, "#.##") + " (50%)\n" +
+                               "SL: $" + str.tostring(labelSl, "#.##"),
+                          style=label.style_label_down,
+                          color=color.new(color.red, 20),
+                          textcolor=color.white, size=size.normal)
+
+    tp1Line := line.new(bar_index, labelTp1, bar_index + 20, labelTp1,
+                       color=color.new(color.green, 0), width=2, style=line.style_dashed)
+    tp2Line := line.new(bar_index, labelTp2, bar_index + 20, labelTp2,
+                       color=color.new(color.green, 0), width=3, style=line.style_solid)
+    slLine := line.new(bar_index, labelSl, bar_index + 20, labelSl,
+                      color=color.new(color.red, 0), width=2, style=line.style_solid)
+
+// ============================================
+// 정보 테이블
+// ============================================
+
+var table infoTable = table.new(position.top_right, 2, 12, bgcolor=color.new(color.white, 10), border_width=1)
+
+if barstate.islast
+    table.clear(infoTable, 0, 0, 1, 11)
+
+    table.cell(infoTable, 0, 0, "🎯 통합 전략", text_color=color.white, text_size=size.normal,
+              bgcolor=color.new(color.purple, 20))
+    table.cell(infoTable, 1, 0, str.tostring(totalScore, "#.#") + "/24점", text_color=color.white,
+              text_size=size.normal, bgcolor=color.new(color.blue, 20))
+
+    table.cell(infoTable, 0, 1, "현재가", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 1, "$" + str.tostring(close, "#.##"), text_color=color.black, text_size=size.small)
+
+    // 불장단타왕
+    table.cell(infoTable, 0, 2, "📊 불장단타왕", text_color=color.white, text_size=size.small,
+              bgcolor=color.new(color.orange, 30))
+    table.cell(infoTable, 1, 2, str.tostring(bulJangScore, "#") + "/10",
+              text_color=bulJangScore >= 5 ? color.green : color.gray, text_size=size.small)
+
+    table.cell(infoTable, 0, 3, "VWAP 터치", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 3, touchingVWAP ? "✅" : "❌",
+              text_color=touchingVWAP ? color.green : color.red, text_size=size.small)
+
+    table.cell(infoTable, 0, 4, "터닝포인트", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 4, turningPoint ? "✅" : "❌",
+              text_color=turningPoint ? color.green : color.red, text_size=size.small)
+
+    table.cell(infoTable, 0, 5, "정배열", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 5, isUptrend ? "✅" : "❌",
+              text_color=isUptrend ? color.green : color.red, text_size=size.small)
+
+    // 클로드21
+    table.cell(infoTable, 0, 6, "🎯 클로드21", text_color=color.white, text_size=size.small,
+              bgcolor=color.new(color.blue, 30))
+    table.cell(infoTable, 1, 6, str.tostring(claude21Score, "#") + "/8",
+              text_color=claude21Score >= 5 ? color.green : color.gray, text_size=size.small)
+
+    table.cell(infoTable, 0, 7, "15분봉", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 7, trend_15m_bullish ? "🟢 BULL" : trend_15m_bearish ? "🔴 BEAR" : "⚪ FLAT",
+              text_color=trend_15m_bullish ? color.green : trend_15m_bearish ? color.red : color.gray, text_size=size.small)
+
+    table.cell(infoTable, 0, 8, "5분봉", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 8, trend_5m_bullish ? "🟢 BULL" : trend_5m_bearish ? "🔴 BEAR" : "⚪ FLAT",
+              text_color=trend_5m_bullish ? color.green : trend_5m_bearish ? color.red : color.gray, text_size=size.small)
+
+    // 필터
+    table.cell(infoTable, 0, 9, "🔍 필터", text_color=color.white, text_size=size.small,
+              bgcolor=color.new(color.green, 30))
+    table.cell(infoTable, 1, 9, str.tostring(filterScore, "#") + "/6",
+              text_color=filterScore >= 4 ? color.green : color.gray, text_size=size.small)
+
+    table.cell(infoTable, 0, 10, "평균회귀", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 10, meanReversionOK ? "✅" : "❌ (" + str.tostring(deviation, "#.#") + "%)",
+              text_color=meanReversionOK ? color.green : color.red, text_size=size.small)
+
+    table.cell(infoTable, 0, 11, "최종 신호", text_color=color.black, text_size=size.small)
+    string finalSignalText = longSignal_final ? "🚀 LONG" : shortSignal_final ? "🔻 SHORT" : "⏸️ 대기"
+    table.cell(infoTable, 1, 11, finalSignalText,
+              text_color=longSignal_final ? color.green : shortSignal_final ? color.red : color.gray,
+              text_size=size.small)
+
+// ============================================
+// 알람 설정
+// ============================================
+
+if longSignal_final
+    string jsonData = '{"signal":"LONG",' +
+          '"entry":"' + str.tostring(close, "#.##") + '",' +
+          '"totalScore":"' + str.tostring(totalScore, "#.#") + '",' +
+          '"bulJangScore":"' + str.tostring(bulJangScore, "#") + '",' +
+          '"claude21Score":"' + str.tostring(claude21Score, "#") + '",' +
+          '"filterScore":"' + str.tostring(filterScore, "#") + '",' +
+          '"tp1":"' + str.tostring(close * (1 + tpPct1/100), "#.##") + '",' +
+          '"tp2":"' + str.tostring(close * (1 + tpPct2/100), "#.##") + '",' +
+          '"sl":"' + str.tostring(close * (1 - slPct/100), "#.##") + '"}'
+
+    alert(jsonData, freq=alert.freq_once_per_bar)
+
+if shortSignal_final
+    string jsonData = '{"signal":"SHORT",' +
+          '"entry":"' + str.tostring(close, "#.##") + '",' +
+          '"totalScore":"' + str.tostring(totalScore, "#.#") + '",' +
+          '"bulJangScore":"' + str.tostring(bulJangScore, "#") + '",' +
+          '"claude21Score":"' + str.tostring(claude21Score, "#") + '",' +
+          '"filterScore":"' + str.tostring(filterScore, "#") + '",' +
+          '"tp1":"' + str.tostring(close * (1 - tpPct1/100), "#.##") + '",' +
+          '"tp2":"' + str.tostring(close * (1 - tpPct2/100), "#.##") + '",' +
+          '"sl":"' + str.tostring(close * (1 + slPct/100), "#.##") + '"}'
+
+    alert(jsonData, freq=alert.freq_once_per_bar)

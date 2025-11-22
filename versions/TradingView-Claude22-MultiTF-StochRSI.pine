@@ -1,0 +1,275 @@
+//@version=5
+indicator("클로드21 멀티TF + StochRSI (Indicator)", overlay=true, max_labels_count=100)
+
+// ======================== 개선된 입력 변수 ========================
+leverageInput = input.int(5, title="레버리지", minval=1, maxval=20)
+riskPercentInput = input.float(20.0, title="투입 비율 (%)", minval=1.0, maxval=100.0)
+tpPct1 = input.float(0.8, title="TP1 수익률 (%)", minval=0.1, maxval=5.0, step=0.1)
+tpPct2 = input.float(1.5, title="TP2 수익률 (%)", minval=0.1, maxval=5.0, step=0.1)
+slPct = input.float(0.3, title="손절 비율 (%)", minval=0.05, maxval=2.0, step=0.05)
+
+// 멀티타임프레임 활성화 옵션
+useMultiTF = input.bool(true, title="멀티타임프레임 필터 사용")
+strictMode = input.bool(true, title="엄격 모드 (모든 조건 만족)")
+
+// 🆕 Stochastic RSI 설정
+useStochRSI = input.bool(true, title="🆕 Stochastic RSI 필터 사용", group="Stochastic RSI")
+stochRSI_length = input.int(14, title="RSI 기간", minval=1, group="Stochastic RSI")
+stochRSI_smoothK = input.int(3, title="K 평활화", minval=1, group="Stochastic RSI")
+stochRSI_smoothD = input.int(3, title="D 평활화", minval=1, group="Stochastic RSI")
+stochRSI_overbought = input.float(80, title="과매수 레벨", minval=50, maxval=100, group="Stochastic RSI")
+stochRSI_oversold = input.float(20, title="과매도 레벨", minval=0, maxval=50, group="Stochastic RSI")
+
+// ======================== Stochastic RSI 계산 ========================
+// 현재 차트 (1분봉) Stochastic RSI
+rsi_for_stoch = ta.rsi(close, stochRSI_length)
+stoch_k = ta.stoch(rsi_for_stoch, rsi_for_stoch, rsi_for_stoch, stochRSI_length)
+stochRSI_k = ta.sma(stoch_k, stochRSI_smoothK)
+stochRSI_d = ta.sma(stochRSI_k, stochRSI_smoothD)
+
+// 5분봉 Stochastic RSI (추가 확인용)
+rsi_5m_for_stoch = request.security(syminfo.tickerid, "5", ta.rsi(close, stochRSI_length), lookahead=barmerge.lookahead_off)
+stoch_k_5m = request.security(syminfo.tickerid, "5", ta.stoch(ta.rsi(close, stochRSI_length), ta.rsi(close, stochRSI_length), ta.rsi(close, stochRSI_length), stochRSI_length), lookahead=barmerge.lookahead_off)
+stochRSI_k_5m = ta.sma(stoch_k_5m, stochRSI_smoothK)
+
+// Stochastic RSI 신호
+stochRSI_bullish = stochRSI_k < stochRSI_oversold or (stochRSI_k > stochRSI_k[1] and stochRSI_k < 50)  // 과매도 구간 또는 상승 중
+stochRSI_bearish = stochRSI_k > stochRSI_overbought or (stochRSI_k < stochRSI_k[1] and stochRSI_k > 50)  // 과매수 구간 또는 하락 중
+stochRSI_golden_cross = ta.crossover(stochRSI_k, stochRSI_d)  // 골든 크로스
+stochRSI_death_cross = ta.crossunder(stochRSI_k, stochRSI_d)  // 데드 크로스
+
+// ======================== 멀티타임프레임 데이터 ========================
+// 15분봉 - 주요 트렌드 방향
+ema20_15m = request.security(syminfo.tickerid, "15", ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+ema50_15m = request.security(syminfo.tickerid, "15", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+rsi_15m = request.security(syminfo.tickerid, "15", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
+
+// 5분봉 - 중간 트렌드 확인
+ema20_5m = request.security(syminfo.tickerid, "5", ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+ema50_5m = request.security(syminfo.tickerid, "5", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+[macdLine_5m, signalLine_5m, histogram_5m] = request.security(syminfo.tickerid, "5", ta.macd(close, 12, 26, 9), lookahead=barmerge.lookahead_off)
+rsi_5m = request.security(syminfo.tickerid, "5", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
+
+// 3분봉 - 정확한 진입점
+ema20_3m = request.security(syminfo.tickerid, "3", ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+ema50_3m = request.security(syminfo.tickerid, "3", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+[macdLine_3m, signalLine_3m, histogram_3m] = request.security(syminfo.tickerid, "3", ta.macd(close, 12, 26, 9), lookahead=barmerge.lookahead_off)
+
+// 현재 차트 (1분봉) 보조 지표
+rsi_1m = ta.rsi(close, 14)
+vwma_1m = ta.vwma(close, 20)
+
+// ======================== 트렌드 방향 분석 ========================
+// 15분봉 주요 트렌드
+trend_15m_bullish = ema20_15m > ema50_15m and rsi_15m > 45 and rsi_15m < 70
+trend_15m_bearish = ema20_15m < ema50_15m and rsi_15m > 30 and rsi_15m < 55
+
+// 5분봉 중간 트렌드
+trend_5m_bullish = ema20_5m > ema50_5m and macdLine_5m > macdLine_5m[1] and rsi_5m > 40
+trend_5m_bearish = ema20_5m < ema50_5m and macdLine_5m < macdLine_5m[1] and rsi_5m < 60
+
+// 3분봉 진입 신호
+signal_3m_long = ta.crossover(ema20_3m, ema50_3m) and macdLine_3m > signalLine_3m
+signal_3m_short = ta.crossunder(ema20_3m, ema50_3m) and macdLine_3m < signalLine_3m
+
+// ======================== 멀티타임프레임 신호 조합 + StochRSI ========================
+// LONG 신호 (모든 타임프레임 정렬 + StochRSI 확인)
+longSignal_basic = signal_3m_long and rsi_1m > 35 and rsi_1m < 65 and close > vwma_1m
+
+// 🆕 Stochastic RSI 조건 추가
+longSignal_stochRSI = if useStochRSI
+    // LONG 조건: 과매도 구간에서 반등 또는 골든크로스
+    (stochRSI_k < stochRSI_oversold or stochRSI_golden_cross or (stochRSI_k > stochRSI_k[1] and stochRSI_k < 50)) and
+    not (stochRSI_k > stochRSI_overbought)  // 과매수 구간 회피
+else
+    true
+
+longSignal_filtered = if useMultiTF
+    if strictMode
+        // 엄격 모드: 모든 조건 만족
+        longSignal_basic and trend_15m_bullish and trend_5m_bullish and longSignal_stochRSI
+    else
+        // 완화 모드: 15분 또는 5분 중 하나만 만족
+        longSignal_basic and (trend_15m_bullish or trend_5m_bullish) and longSignal_stochRSI
+else
+    longSignal_basic and longSignal_stochRSI
+
+// SHORT 신호 (모든 타임프레임 정렬 + StochRSI 확인)
+shortSignal_basic = signal_3m_short and rsi_1m > 35 and rsi_1m < 65 and close < vwma_1m
+
+// 🆕 Stochastic RSI 조건 추가
+shortSignal_stochRSI = if useStochRSI
+    // SHORT 조건: 과매수 구간에서 하락 또는 데드크로스
+    (stochRSI_k > stochRSI_overbought or stochRSI_death_cross or (stochRSI_k < stochRSI_k[1] and stochRSI_k > 50)) and
+    not (stochRSI_k < stochRSI_oversold)  // 과매도 구간 회피
+else
+    true
+
+shortSignal_filtered = if useMultiTF
+    if strictMode
+        // 엄격 모드: 모든 조건 만족
+        shortSignal_basic and trend_15m_bearish and trend_5m_bearish and shortSignal_stochRSI
+    else
+        // 완화 모드: 15분 또는 5분 중 하나만 만족
+        shortSignal_basic and (trend_15m_bearish or trend_5m_bearish) and shortSignal_stochRSI
+else
+    shortSignal_basic and shortSignal_stochRSI
+
+// ======================== 차트 표시 ========================
+plotshape(longSignal_filtered, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal, title="멀티TF LONG")
+plotshape(shortSignal_filtered, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.normal, title="멀티TF SHORT")
+
+// 필터링된 신호 표시
+plotshape(longSignal_basic and not longSignal_filtered, style=shape.circle, location=location.belowbar, color=color.gray, size=size.tiny, title="필터링된 LONG")
+plotshape(shortSignal_basic and not shortSignal_filtered, style=shape.circle, location=location.abovebar, color=color.gray, size=size.tiny, title="필터링된 SHORT")
+
+// EMA 라인 표시
+plot(ema20_15m, color=color.blue, linewidth=1, title="EMA20 (15m)")
+plot(ema50_15m, color=color.red, linewidth=1, title="EMA50 (15m)")
+
+// ======================== 신호 발생 시 TP/SL 계산 및 표시 ========================
+var label timeLabel = na
+var line tp1Line = na
+var line tp2Line = na
+var line slLine = na
+
+if longSignal_filtered
+    if not na(timeLabel)
+        label.delete(timeLabel)
+    if not na(tp1Line)
+        line.delete(tp1Line)
+    if not na(tp2Line)
+        line.delete(tp2Line)
+    if not na(slLine)
+        line.delete(slLine)
+
+    float labelTp1 = close * (1 + tpPct1/100)
+    float labelTp2 = close * (1 + tpPct2/100)
+    float labelSl = close * (1 - slPct/100)
+
+    timeLabel := label.new(bar_index, low - (high - low) * 0.2,
+                          text="📅 " + str.format_time(time, "MM-dd HH:mm", "Asia/Seoul") +
+                               "\n🔥 멀티TF + StochRSI LONG / $" + str.tostring(close, "#.##") +
+                               "\nTP1: $" + str.tostring(labelTp1, "#.##") + " / TP2: $" + str.tostring(labelTp2, "#.##") +
+                               "\nSL: $" + str.tostring(labelSl, "#.##") +
+                               "\n15m:" + (trend_15m_bullish ? "✅" : "❌") + " 5m:" + (trend_5m_bullish ? "✅" : "❌") +
+                               "\n🆕 StochRSI K:" + str.tostring(stochRSI_k, "#.#") + " " + (stochRSI_golden_cross ? "🟢GC" : ""),
+                          style=label.style_label_up,
+                          color=color.new(color.green, 40),
+                          textcolor=color.white, size=size.normal)
+
+    tp1Line := line.new(bar_index, labelTp1, bar_index + 10, labelTp1, color=color.green, width=2, style=line.style_dashed)
+    tp2Line := line.new(bar_index, labelTp2, bar_index + 10, labelTp2, color=color.green, width=2, style=line.style_solid)
+    slLine := line.new(bar_index, labelSl, bar_index + 10, labelSl, color=color.red, width=2, style=line.style_solid)
+
+if shortSignal_filtered
+    if not na(timeLabel)
+        label.delete(timeLabel)
+    if not na(tp1Line)
+        line.delete(tp1Line)
+    if not na(tp2Line)
+        line.delete(tp2Line)
+    if not na(slLine)
+        line.delete(slLine)
+
+    float labelTp1 = close * (1 - tpPct1/100)
+    float labelTp2 = close * (1 - tpPct2/100)
+    float labelSl = close * (1 + slPct/100)
+
+    timeLabel := label.new(bar_index, high + (high - low) * 0.2,
+                          text="📅 " + str.format_time(time, "MM-dd HH:mm", "Asia/Seoul") +
+                               "\n🔥 멀티TF + StochRSI SHORT / $" + str.tostring(close, "#.##") +
+                               "\nTP1: $" + str.tostring(labelTp1, "#.##") + " / TP2: $" + str.tostring(labelTp2, "#.##") +
+                               "\nSL: $" + str.tostring(labelSl, "#.##") +
+                               "\n15m:" + (trend_15m_bearish ? "✅" : "❌") + " 5m:" + (trend_5m_bearish ? "✅" : "❌") +
+                               "\n🆕 StochRSI K:" + str.tostring(stochRSI_k, "#.#") + " " + (stochRSI_death_cross ? "🔴DC" : ""),
+                          style=label.style_label_down,
+                          color=color.new(color.red, 40),
+                          textcolor=color.white, size=size.normal)
+
+    tp1Line := line.new(bar_index, labelTp1, bar_index + 10, labelTp1, color=color.green, width=2, style=line.style_dashed)
+    tp2Line := line.new(bar_index, labelTp2, bar_index + 10, labelTp2, color=color.green, width=2, style=line.style_solid)
+    slLine := line.new(bar_index, labelSl, bar_index + 10, labelSl, color=color.red, width=2, style=line.style_solid)
+
+// ======================== 개선된 정보 테이블 ========================
+var table infoTable = table.new(position.top_right, 2, 10, bgcolor=color.white, border_width=1)
+
+if barstate.islast
+    table.clear(infoTable, 0, 0, 1, 9)
+
+    // 헤더
+    table.cell(infoTable, 0, 0, "멀티TF + StochRSI", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.purple, 20))
+    table.cell(infoTable, 1, 0, "신호전용모드", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.blue, 20))
+
+    table.cell(infoTable, 0, 1, "Current Price", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 1, "$" + str.tostring(close, "#.#"), text_color=color.black, text_size=size.small)
+
+    table.cell(infoTable, 0, 2, "15m Trend", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 2, trend_15m_bullish ? "🟢 BULL" : trend_15m_bearish ? "🔴 BEAR" : "⚪ FLAT", text_color=trend_15m_bullish ? color.green : trend_15m_bearish ? color.red : color.gray, text_size=size.small)
+
+    table.cell(infoTable, 0, 3, "5m Trend", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 3, trend_5m_bullish ? "🟢 BULL" : trend_5m_bearish ? "🔴 BEAR" : "⚪ FLAT", text_color=trend_5m_bullish ? color.green : trend_5m_bearish ? color.red : color.gray, text_size=size.small)
+
+    // 🆕 Stochastic RSI 표시
+    table.cell(infoTable, 0, 4, "🆕 StochRSI K", text_color=color.black, text_size=size.small, bgcolor=color.new(color.yellow, 80))
+    string stochStatus = str.tostring(stochRSI_k, "#.#")
+    color stochColor = stochRSI_k < stochRSI_oversold ? color.green : stochRSI_k > stochRSI_overbought ? color.red : color.gray
+    if stochRSI_golden_cross
+        stochStatus := stochStatus + " 🟢GC"
+    if stochRSI_death_cross
+        stochStatus := stochStatus + " 🔴DC"
+    table.cell(infoTable, 1, 4, stochStatus, text_color=stochColor, text_size=size.small)
+
+    table.cell(infoTable, 0, 5, "StochRSI Status", text_color=color.black, text_size=size.small)
+    string stochSignal = stochRSI_k < stochRSI_oversold ? "과매도" : stochRSI_k > stochRSI_overbought ? "과매수" : "중립"
+    table.cell(infoTable, 1, 5, stochSignal, text_color=stochColor, text_size=size.small)
+
+    table.cell(infoTable, 0, 6, "Next Signal", text_color=color.black, text_size=size.small)
+    string nextSignal = "대기중"
+    if trend_15m_bullish and trend_5m_bullish and stochRSI_bullish
+        nextSignal := "🟢 LONG 준비"
+    else if trend_15m_bearish and trend_5m_bearish and stochRSI_bearish
+        nextSignal := "🔴 SHORT 준비"
+    table.cell(infoTable, 1, 6, nextSignal, text_color=str.contains(nextSignal, "LONG") ? color.green : str.contains(nextSignal, "SHORT") ? color.red : color.gray, text_size=size.small)
+
+    table.cell(infoTable, 0, 7, "TP1/TP2/SL", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 7, str.tostring(tpPct1, "#.#") + "%/" + str.tostring(tpPct2, "#.#") + "%/" + str.tostring(slPct, "#.#") + "%", text_color=color.blue, text_size=size.small)
+
+    table.cell(infoTable, 0, 8, "Leverage", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 8, str.tostring(leverageInput) + "배 × " + str.tostring(riskPercentInput) + "%", text_color=color.orange, text_size=size.small)
+
+    table.cell(infoTable, 0, 9, "Mode", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 9, strictMode ? "엄격모드" : "완화모드", text_color=strictMode ? color.red : color.green, text_size=size.small)
+
+// ======================== 알람 설정 (Google Sheets 연동) ========================
+if longSignal_filtered
+    // JSON 데이터에 StochRSI 정보 추가
+    string jsonData = '{"date":"' + str.format_time(time, "yyyy-MM-dd", "Asia/Seoul") + '",' +
+          '"time":"' + str.format_time(time, "HH:mm", "Asia/Seoul") + '",' +
+          '"signal":"LONG",' +
+          '"entry":"' + str.tostring(close, "#.##") + '",' +
+          '"tp1":"' + str.tostring(close * (1 + tpPct1/100), "#.##") + '",' +
+          '"tp2":"' + str.tostring(close * (1 + tpPct2/100), "#.##") + '",' +
+          '"sl":"' + str.tostring(close * (1 - slPct/100), "#.##") + '",' +
+          '"trend15m":"' + (trend_15m_bullish ? "BULL" : "BEAR") + '",' +
+          '"trend5m":"' + (trend_5m_bullish ? "BULL" : trend_5m_bearish ? "BEAR" : "FLAT") + '",' +
+          '"stochRSI_k":"' + str.tostring(stochRSI_k, "#.##") + '",' +
+          '"stochRSI_signal":"' + (stochRSI_golden_cross ? "GOLDEN_CROSS" : stochRSI_k < stochRSI_oversold ? "OVERSOLD" : "BULLISH") + '"}'
+
+    alert(jsonData, freq=alert.freq_once_per_bar)
+
+if shortSignal_filtered
+    // JSON 데이터에 StochRSI 정보 추가
+    string jsonData = '{"date":"' + str.format_time(time, "yyyy-MM-dd", "Asia/Seoul") + '",' +
+          '"time":"' + str.format_time(time, "HH:mm", "Asia/Seoul") + '",' +
+          '"signal":"SHORT",' +
+          '"entry":"' + str.tostring(close, "#.##") + '",' +
+          '"tp1":"' + str.tostring(close * (1 - tpPct1/100), "#.##") + '",' +
+          '"tp2":"' + str.tostring(close * (1 - tpPct2/100), "#.##") + '",' +
+          '"sl":"' + str.tostring(close * (1 + slPct/100), "#.##") + '",' +
+          '"trend15m":"' + (trend_15m_bearish ? "BEAR" : "BULL") + '",' +
+          '"trend5m":"' + (trend_5m_bullish ? "BULL" : trend_5m_bearish ? "BEAR" : "FLAT") + '",' +
+          '"stochRSI_k":"' + str.tostring(stochRSI_k, "#.##") + '",' +
+          '"stochRSI_signal":"' + (stochRSI_death_cross ? "DEATH_CROSS" : stochRSI_k > stochRSI_overbought ? "OVERBOUGHT" : "BEARISH") + '"}'
+
+    alert(jsonData, freq=alert.freq_once_per_bar)
