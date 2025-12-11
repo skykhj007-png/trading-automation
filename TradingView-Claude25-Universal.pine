@@ -1,0 +1,850 @@
+//@version=5
+indicator("클로드25 유니버셜 (선물/현물/주식)", overlay=true, max_labels_count=100)
+
+// ============================================
+// 🎯 거래 모드 선택
+// ============================================
+tradeMode = input.string("선물", title="📊 거래 모드", options=["선물", "현물코인", "주식"],
+    tooltip="선물: LONG+SHORT, 현물코인: LONG만, 주식: LONG만")
+
+// ============================================
+// 🔧 모드별 자동 TP/SL 설정
+// ============================================
+
+// 모드별 기본값 계산
+float defaultTP1 = tradeMode == "선물" ? 0.8 : tradeMode == "현물코인" ? 1.5 : 2.0
+float defaultTP2 = tradeMode == "선물" ? 1.5 : tradeMode == "현물코인" ? 3.0 : 4.0
+float defaultSL = tradeMode == "선물" ? 0.3 : tradeMode == "현물코인" ? 1.0 : 1.5
+
+// 수동 오버라이드 옵션
+useAutoTPSL = input.bool(true, title="자동 TP/SL 사용", tooltip="체크 해제시 수동 설정 사용")
+manualTP1 = input.float(0.8, title="수동 TP1 (%)", minval=0.1, maxval=10.0, step=0.1)
+manualTP2 = input.float(1.5, title="수동 TP2 (%)", minval=0.1, maxval=20.0, step=0.1)
+manualSL = input.float(0.3, title="수동 SL (%)", minval=0.05, maxval=5.0, step=0.05)
+
+// 최종 TP/SL 값
+float tpPct1 = useAutoTPSL ? defaultTP1 : manualTP1
+float tpPct2 = useAutoTPSL ? defaultTP2 : manualTP2
+float slPct = useAutoTPSL ? defaultSL : manualSL
+
+// ============================================
+// 레버리지 및 포지션 설정
+// ============================================
+leverageInput = input.int(5, title="레버리지 (선물만)", minval=1, maxval=20)
+riskPercentInput = input.float(20.0, title="투입 비율 (%)", minval=1.0, maxval=100.0)
+
+// 신호 강도 설정
+minSignalStrength = input.int(10, title="최소 신호 강도", minval=8, maxval=20)
+strictMode = input.bool(true, title="엄격 모드")
+useMultiTF = input.bool(true, title="멀티타임프레임 필터")
+useADXFilter = input.bool(false, title="ADX 필터 사용", tooltip="ON: 횡보장 필터링 (엄격), OFF: ADX는 보너스 점수만")
+
+// ============================================
+// 🐋 고래 감지 설정
+// ============================================
+whaleMultiplier = input.float(2.0, title="고래 감지 배수", minval=1.5, maxval=5.0, step=0.5)
+institutionMultiplier = input.float(3.0, title="기관 감지 배수", minval=2.0, maxval=10.0, step=0.5)
+volumeLength = input.int(20, title="거래량 평균 기간", minval=10, maxval=50)
+
+// 거래량 분석
+avgVolume = ta.sma(volume, volumeLength)
+volumeRatio = volume / avgVolume
+
+// 고래/기관 감지
+isWhale = volumeRatio >= whaleMultiplier
+isInstitution = volumeRatio >= institutionMultiplier
+
+// Volume Delta (매수/매도 압력)
+bullVolume = close > open ? volume : volume * (close - low) / (high - low)
+bearVolume = close < open ? volume : volume * (high - close) / (high - low)
+buyPressure = bullVolume / (bullVolume + bearVolume) * 100
+sellPressure = 100 - buyPressure
+
+// 고래 방향 판별
+whaleBuying = isWhale and close > open and buyPressure > 60
+whaleSelling = isWhale and close < open and sellPressure > 60
+institutionBuying = isInstitution and close > open and buyPressure > 60
+institutionSelling = isInstitution and close < open and sellPressure > 60
+
+// 누적/분산 감지
+priceUp = close > close[1]
+priceDown = close < close[1]
+volumeUp = volume > volume[1]
+isAccumulation = priceUp and volumeUp
+isDistribution = priceDown and volumeUp
+
+// ============================================
+// 이동평균선 및 VWAP
+// ============================================
+vwap100 = ta.vwma(close, 100)
+ma7 = ta.sma(close, 7)
+ma15 = ta.sma(close, 15)
+ma50 = ta.sma(close, 50)
+ma100 = ta.sma(close, 100)
+ma200 = ta.sma(close, 200)
+
+// POC 근사값
+var float pocPrice = close
+var float maxVolume = 0.0
+for i = 0 to 99
+    if volume[i] > maxVolume
+        maxVolume := volume[i]
+        pocPrice := close[i]
+
+// ============================================
+// Stochastic RSI
+// ============================================
+rsiLength = input.int(14, title="RSI 길이", minval=5, maxval=25)
+stochLength = input.int(14, title="Stoch 길이", minval=5, maxval=25)
+smoothK = input.int(3, title="Stoch K 스무딩", minval=1, maxval=10)
+smoothD = input.int(3, title="Stoch D 스무딩", minval=1, maxval=10)
+
+rsi = ta.rsi(close, rsiLength)
+stochRsi = ta.stoch(rsi, rsi, rsi, stochLength)
+stochK = ta.sma(stochRsi, smoothK)
+stochD = ta.sma(stochK, smoothD)
+
+stochOversold = stochK < 20
+stochOverbought = stochK > 80
+stochGoldenCross = ta.crossover(stochK, stochD)
+stochDeadCross = ta.crossunder(stochK, stochD)
+
+// ============================================
+// ADX (추세 강도) - 횡보장 필터
+// ============================================
+adxLength = input.int(14, title="ADX 길이", minval=7, maxval=30)
+adxThreshold = input.float(18.0, title="ADX 임계값 (추세 강도)", minval=12.0, maxval=35.0, step=1.0,
+    tooltip="18 이상: 추세 있음, 25 이상: 강한 추세, 18 미만: 횡보장")
+
+[diPlus, diMinus, adx] = ta.dmi(adxLength, adxLength)
+
+// 추세 강도 판단
+noTrend = adx < adxThreshold           // 횡보장 (진입 금지)
+trendExists = adx >= adxThreshold      // 추세 있음 (진입 가능)
+strongTrend = adx >= 25                // 강한 추세
+veryStrongTrend = adx >= 35            // 매우 강한 추세
+
+// DI 방향 (추세 방향 확인)
+bullishDI = diPlus > diMinus           // 상승 추세
+bearishDI = diMinus > diPlus           // 하락 추세
+
+// ============================================
+// 📈 Open Interest & Funding Rate
+// ============================================
+useOIFilter = input.bool(false, title="OI 필터 사용", tooltip="Open Interest 증가 시에만 진입 (TradingView 프리미엄 필요)")
+oiChangeThreshold = input.float(1.0, title="OI 변화율 임계값 (%)", minval=0.5, maxval=5.0, step=0.5)
+
+// OI/펀딩비 - 거래량 기반 대체 계산 (심볼 오류 방지)
+// 실제 OI 데이터는 Coinglass 웹사이트 참고 권장
+float oi = volume
+float oiPrev = volume[1]
+float oiChange = oiPrev > 0 ? ((oi - oiPrev) / oiPrev) * 100 : 0
+
+// 펀딩비 대체 - 가격 모멘텀 기반 추정
+float priceChange = (close - close[8]) / close[8] * 100
+float fundingRate = priceChange > 2 ? 0.06 : priceChange < -2 ? -0.02 : 0.01
+
+// OI 상태 판단
+oiIncreasing = oiChange > oiChangeThreshold      // OI 증가 (신규 포지션 진입)
+oiDecreasing = oiChange < -oiChangeThreshold     // OI 감소 (포지션 청산)
+oiStable = math.abs(oiChange) <= oiChangeThreshold
+
+// 펀딩비 상태 판단
+fundingBullish = fundingRate < -0.01             // 숏 과열 → 상승 가능
+fundingBearish = fundingRate > 0.05              // 롱 과열 → 하락 주의
+fundingNeutral = fundingRate >= -0.01 and fundingRate <= 0.05
+
+// OI + 가격 조합 분석
+oiPriceUp = oiIncreasing and close > close[1]    // OI↑ + 가격↑ = 강한 상승
+oiPriceDown = oiIncreasing and close < close[1]  // OI↑ + 가격↓ = 강한 하락
+oiLongSqueeze = oiDecreasing and close < close[1] // OI↓ + 가격↓ = 롱 청산
+oiShortSqueeze = oiDecreasing and close > close[1] // OI↓ + 가격↑ = 숏 청산
+
+// ============================================
+// Bollinger Bands
+// ============================================
+bbLength = input.int(20, title="BB 길이", minval=10, maxval=50)
+bbMult = input.float(2.0, title="BB 배수", minval=1.0, maxval=3.0, step=0.1)
+
+bbBasis = ta.sma(close, bbLength)
+bbDev = ta.stdev(close, bbLength)
+bbUpper = bbBasis + bbMult * bbDev
+bbLower = bbBasis - bbMult * bbDev
+bbWidth = (bbUpper - bbLower) / bbBasis * 100
+bbSqueeze = bbWidth < ta.sma(bbWidth, 20) * 0.8
+
+// BB 신호
+touchingBBLower = low <= bbLower
+touchingBBUpper = high >= bbUpper
+bbReversal_long = touchingBBLower and stochOversold
+bbReversal_short = touchingBBUpper and stochOverbought
+
+// ============================================
+// 🔮 피봇 포인트 (스윙 고점/저점)
+// ============================================
+pivotLength = input.int(5, title="피봇 길이", minval=2, maxval=20)
+showPivots = input.bool(true, title="피봇 포인트 표시")
+
+// 피봇 고점/저점 감지
+pivotHigh = ta.pivothigh(high, pivotLength, pivotLength)
+pivotLow = ta.pivotlow(low, pivotLength, pivotLength)
+
+// 최근 피봇 저장
+var float lastPivotHigh = na
+var float lastPivotLow = na
+var int lastPivotHighBar = na
+var int lastPivotLowBar = na
+
+if not na(pivotHigh)
+    lastPivotHigh := pivotHigh
+    lastPivotHighBar := bar_index - pivotLength
+if not na(pivotLow)
+    lastPivotLow := pivotLow
+    lastPivotLowBar := bar_index - pivotLength
+
+// ============================================
+// 📊 지지/저항 레벨
+// ============================================
+showSR = input.bool(true, title="지지/저항 레벨 표시")
+srLength = input.int(20, title="지지/저항 계산 길이", minval=10, maxval=50)
+
+// 최근 고점/저점 기반 지지/저항
+recentHigh = ta.highest(high, srLength)
+recentLow = ta.lowest(low, srLength)
+srMiddle = (recentHigh + recentLow) / 2
+
+// 가격이 지지/저항 근처인지 확인
+nearResistance = high >= recentHigh * 0.998
+nearSupport = low <= recentLow * 1.002
+nearMiddle = math.abs(close - srMiddle) / srMiddle < 0.005
+
+// ============================================
+// 📈 다이버전스 감지 (RSI vs 가격)
+// ============================================
+showDivergence = input.bool(true, title="다이버전스 표시")
+divLength = input.int(14, title="다이버전스 RSI 길이", minval=7, maxval=21)
+
+divRsi = ta.rsi(close, divLength)
+
+// 불리시 다이버전스: 가격 저점 하락 + RSI 저점 상승
+priceLow1 = ta.lowest(low, 5)
+priceLow2 = ta.lowest(low[5], 5)
+rsiLow1 = ta.lowest(divRsi, 5)
+rsiLow2 = ta.lowest(divRsi[5], 5)
+bullishDivergence = priceLow1 < priceLow2 and rsiLow1 > rsiLow2 and divRsi < 40
+
+// 베어리시 다이버전스: 가격 고점 상승 + RSI 고점 하락
+priceHigh1 = ta.highest(high, 5)
+priceHigh2 = ta.highest(high[5], 5)
+rsiHigh1 = ta.highest(divRsi, 5)
+rsiHigh2 = ta.highest(divRsi[5], 5)
+bearishDivergence = priceHigh1 > priceHigh2 and rsiHigh1 < rsiHigh2 and divRsi > 60
+
+// ============================================
+// 🎯 중요 구간 감지
+// ============================================
+// 강한 매수 구간: BB하단 + 지지선 + 과매도
+strongBuyZone = touchingBBLower and nearSupport and stochOversold
+// 강한 매도 구간: BB상단 + 저항선 + 과매수
+strongSellZone = touchingBBUpper and nearResistance and stochOverbought
+// 변곡점 구간: 다이버전스 발생
+turningZone = bullishDivergence or bearishDivergence
+
+// ============================================
+// 불장단타왕 점수 (최대 10점)
+// ============================================
+var float bulJangScore = 0.0
+bulJangScore := 0.0
+
+touchingVWAP = math.abs(close - vwap100) / vwap100 < 0.01
+if touchingVWAP
+    bulJangScore += 3
+
+ma50_slope = ma50 - ma50[5]
+vwap_gentle = math.abs(ma50_slope) < close * 0.01
+upCount = 0
+for i = 0 to 4
+    if close[i] > close[i + 1]
+        upCount += 1
+recentUptrend = upCount >= 3
+turningPoint = vwap_gentle and recentUptrend
+
+vwapGoldenCross = ta.crossover(close, vwap100)
+if turningPoint
+    bulJangScore += 5
+if vwapGoldenCross
+    bulJangScore += 2
+
+isUptrend = ma7 > ma15 and ma15 > ma50
+if isUptrend
+    bulJangScore += 2
+
+// ============================================
+// 멀티타임프레임 분석 (모드별 타임프레임)
+// ============================================
+
+// 모드별 타임프레임 설정
+// 선물: 1시간, 15분, 5분 (확실한 기회)
+// 현물/주식: 일봉, 4시간, 1시간 (스윙)
+
+string tf_high = tradeMode == "선물" ? "60" : "D"      // 상위: 선물=1시간, 현물/주식=일봉
+string tf_mid = tradeMode == "선물" ? "15" : "240"    // 중간: 선물=15분, 현물/주식=4시간
+string tf_low = tradeMode == "선물" ? "5" : "60"      // 하위: 선물=5분, 현물/주식=1시간
+
+// 상위 타임프레임 (선물: 15분 / 현물,주식: 일봉)
+ema20_high = request.security(syminfo.tickerid, tf_high, ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+ema50_high = request.security(syminfo.tickerid, tf_high, ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+rsi_high = request.security(syminfo.tickerid, tf_high, ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
+
+trend_high_bullish = ema20_high > ema50_high and rsi_high > 45 and rsi_high < 70
+trend_high_bearish = ema20_high < ema50_high and rsi_high > 30 and rsi_high < 55
+
+// 중간 타임프레임 (선물: 5분 / 현물,주식: 4시간)
+ema20_mid = request.security(syminfo.tickerid, tf_mid, ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+ema50_mid = request.security(syminfo.tickerid, tf_mid, ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+[macdLine_mid, signalLine_mid, histogram_mid] = request.security(syminfo.tickerid, tf_mid, ta.macd(close, 12, 26, 9), lookahead=barmerge.lookahead_off)
+rsi_mid = request.security(syminfo.tickerid, tf_mid, ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
+
+macd_rising_mid = macdLine_mid > macdLine_mid[1]
+trend_mid_bullish = ema20_mid > ema50_mid and macd_rising_mid and rsi_mid > 40
+trend_mid_bearish = ema20_mid < ema50_mid and not macd_rising_mid and rsi_mid < 60
+
+// 하위 타임프레임 (선물: 3분 / 현물,주식: 1시간)
+ema20_low = request.security(syminfo.tickerid, tf_low, ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+ema50_low = request.security(syminfo.tickerid, tf_low, ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+[macdLine_low, signalLine_low, histogram_low] = request.security(syminfo.tickerid, tf_low, ta.macd(close, 12, 26, 9), lookahead=barmerge.lookahead_off)
+
+// 호환성을 위한 별칭 (기존 변수명 유지)
+ema20_15m = ema20_high
+ema50_15m = ema50_high
+rsi_15m = rsi_high
+trend_15m_bullish = trend_high_bullish
+trend_15m_bearish = trend_high_bearish
+
+ema20_5m = ema20_mid
+ema50_5m = ema50_mid
+macdLine_5m = macdLine_mid
+signalLine_5m = signalLine_mid
+histogram_5m = histogram_mid
+rsi_5m = rsi_mid
+macd_rising_5m = macd_rising_mid
+trend_5m_bullish = trend_mid_bullish
+trend_5m_bearish = trend_mid_bearish
+
+ema20_3m = ema20_low
+ema50_3m = ema50_low
+macdLine_3m = macdLine_low
+signalLine_3m = signalLine_low
+histogram_3m = histogram_low
+
+signal_3m_long = ta.crossover(ema20_3m, ema50_3m) and macdLine_3m > signalLine_3m
+signal_3m_short = ta.crossunder(ema20_3m, ema50_3m) and macdLine_3m < signalLine_3m
+
+// 1분봉
+rsi_1m = ta.rsi(close, 14)
+vwma_1m = ta.vwma(close, 20)
+
+// ============================================
+// 클로드 점수 (최대 8점)
+// ============================================
+var float claude21Score = 0.0
+claude21Score := 0.0
+
+longSignal_basic = signal_3m_long and rsi_1m > 35 and rsi_1m < 65 and close > vwma_1m
+shortSignal_basic = signal_3m_short and rsi_1m > 35 and rsi_1m < 65 and close < vwma_1m
+
+if longSignal_basic
+    claude21Score += 3
+if shortSignal_basic
+    claude21Score += 3
+
+if trend_15m_bullish and longSignal_basic
+    claude21Score += 3
+if trend_15m_bearish and shortSignal_basic
+    claude21Score += 3
+
+if trend_5m_bullish and longSignal_basic
+    claude21Score += 2
+if trend_5m_bearish and shortSignal_basic
+    claude21Score += 2
+
+// ============================================
+// 필터 점수 (최대 6점)
+// ============================================
+var float filterScore = 0.0
+filterScore := 0.0
+
+deviation = (close - vwap100) / vwap100 * 100
+meanReversionOK = math.abs(deviation) < 10
+if meanReversionOK
+    filterScore += 2
+
+nearPOC = math.abs(close - pocPrice) / pocPrice < 0.02
+if nearPOC
+    filterScore += 2
+
+above200MA = close > ma200
+if above200MA
+    filterScore += 2
+
+// ============================================
+// 고래 보너스 점수 (최대 4점)
+// ============================================
+var float whaleScore = 0.0
+whaleScore := 0.0
+
+if whaleBuying
+    whaleScore += 2
+if institutionBuying
+    whaleScore += 2
+if isAccumulation
+    whaleScore += 1
+
+// SHORT 방향 고래 점수 (선물에서만 사용)
+var float whaleScoreShort = 0.0
+whaleScoreShort := 0.0
+if whaleSelling
+    whaleScoreShort += 2
+if institutionSelling
+    whaleScoreShort += 2
+if isDistribution
+    whaleScoreShort += 1
+
+// ============================================
+// 🎯 최종 신호 결정 (모드별 처리)
+// ============================================
+
+var float totalScore = 0.0
+totalScore := bulJangScore + claude21Score + filterScore + whaleScore
+
+var float totalScoreShort = 0.0
+totalScoreShort := bulJangScore + claude21Score + filterScore + whaleScoreShort
+
+// 기본 LONG 신호
+longSignal_final = bulJangScore >= 5 and longSignal_basic and totalScore >= minSignalStrength
+
+// 기본 SHORT 신호 (선물에서만 활성화)
+shortSignal_final = false
+if tradeMode == "선물"
+    shortSignal_final := shortSignal_basic and not isUptrend and close < ma200 and totalScoreShort >= minSignalStrength
+
+// 엄격 모드 (완화됨: 하나의 TF만 일치해도 OK, 또는 점수가 높으면 통과)
+if strictMode and useMultiTF
+    // 점수가 충분히 높으면 (14점 이상) TF 필터 완화
+    bool tfLongOK = trend_15m_bullish or trend_5m_bullish or totalScore >= minSignalStrength + 4
+    bool tfShortOK = trend_15m_bearish or trend_5m_bearish or totalScoreShort >= minSignalStrength + 4
+    longSignal_final := longSignal_final and tfLongOK
+    if tradeMode == "선물"
+        shortSignal_final := shortSignal_final and tfShortOK
+
+// StochRSI 필터
+longSignal_final := longSignal_final and (stochOversold or stochGoldenCross)
+if tradeMode == "선물"
+    shortSignal_final := shortSignal_final and (stochOverbought or stochDeadCross)
+
+// BB 필터 (완화됨 - 하나의 TF만 일치해도 OK)
+longSignal_final := longSignal_final or (bbReversal_long and totalScore >= minSignalStrength - 2 and (trend_15m_bullish or trend_5m_bullish))
+if tradeMode == "선물"
+    shortSignal_final := shortSignal_final or (bbReversal_short and totalScoreShort >= minSignalStrength - 2 and (trend_15m_bearish or trend_5m_bearish))
+
+// ADX 필터 (횡보장 필터링) - 선택적 적용
+if useADXFilter
+    // 엄격 모드: ADX + DI 방향 모두 필수
+    longSignal_final := longSignal_final and trendExists and bullishDI
+    if tradeMode == "선물"
+        shortSignal_final := shortSignal_final and trendExists and bearishDI
+// ADX OFF일 때: DI 반대 방향이면 신호 약화 (완전 차단 X)
+else
+    // DI 방향이 반대면 점수 -2점 페널티 적용 (신호 차단은 안함)
+    if not bullishDI and totalScore < minSignalStrength + 2
+        longSignal_final := false
+    if tradeMode == "선물" and not bearishDI and totalScoreShort < minSignalStrength + 2
+        shortSignal_final := false
+
+// OI 필터 (Open Interest 기반) - 선택적 적용
+if useOIFilter and oi > 0
+    // LONG: OI 증가 + 가격 상승 또는 숏 스퀴즈
+    longSignal_final := longSignal_final and (oiPriceUp or oiShortSqueeze or oiStable)
+    // SHORT: OI 증가 + 가격 하락 또는 롱 스퀴즈
+    if tradeMode == "선물"
+        shortSignal_final := shortSignal_final and (oiPriceDown or oiLongSqueeze or oiStable)
+
+// 펀딩비 경고 필터 (극단적 과열 시 반대 포지션 주의)
+if fundingBearish  // 롱 과열 (펀딩비 > 0.05%)
+    longSignal_final := longSignal_final and strongTrend  // 강한 추세에서만 롱 허용
+if fundingBullish  // 숏 과열 (펀딩비 < -0.01%)
+    if tradeMode == "선물"
+        shortSignal_final := shortSignal_final and strongTrend  // 강한 추세에서만 숏 허용
+
+// ============================================
+// 🚨 고래 EXIT 신호 (현물/주식용)
+// ============================================
+
+// 현물/주식에서 고래 매도 = 청산 경고
+whaleExitSignal = (tradeMode == "현물코인" or tradeMode == "주식") and (whaleSelling or institutionSelling)
+
+// ============================================
+// 차트 표시
+// ============================================
+
+// 이동평균선
+plot(vwap100, color=color.new(color.purple, 0), linewidth=3, title="VWAP 100")
+plot(ma50, color=color.new(color.orange, 0), linewidth=2, title="MA 50")
+plot(ma200, color=color.new(color.blue, 0), linewidth=2, title="MA 200")
+
+// Bollinger Bands
+plot(bbUpper, color=color.new(color.gray, 50), linewidth=1, title="BB Upper")
+plot(bbLower, color=color.new(color.gray, 50), linewidth=1, title="BB Lower")
+
+// 15분봉 EMA
+plot(ema20_15m, color=color.new(color.green, 50), linewidth=1, title="EMA20 (15m)")
+plot(ema50_15m, color=color.new(color.red, 50), linewidth=1, title="EMA50 (15m)")
+
+// 신호 표시
+plotshape(longSignal_final, style=shape.triangleup, location=location.belowbar,
+         color=color.new(color.green, 0), size=size.normal, title="LONG 신호")
+plotshape(shortSignal_final and tradeMode == "선물", style=shape.triangledown, location=location.abovebar,
+         color=color.new(color.red, 0), size=size.normal, title="SHORT 신호")
+
+// 고래 신호
+plotshape(whaleBuying, style=shape.circle, location=location.belowbar,
+         color=color.new(color.lime, 0), size=size.tiny, title="고래 매수")
+plotshape(whaleSelling and tradeMode == "선물", style=shape.circle, location=location.abovebar,
+         color=color.new(color.fuchsia, 0), size=size.tiny, title="고래 매도 (선물)")
+
+// 기관 신호
+plotshape(institutionBuying, style=shape.diamond, location=location.belowbar,
+         color=color.new(color.aqua, 0), size=size.tiny, title="기관 매수")
+plotshape(institutionSelling and tradeMode == "선물", style=shape.diamond, location=location.abovebar,
+         color=color.new(color.purple, 0), size=size.tiny, title="기관 매도 (선물)")
+
+// EXIT 경고 (현물/주식)
+plotshape(whaleExitSignal, style=shape.xcross, location=location.abovebar,
+         color=color.new(color.orange, 0), size=size.small, title="EXIT 경고")
+
+// 누적/분산 배경
+bgcolor(isAccumulation ? color.new(color.green, 90) : na, title="누적 구간")
+bgcolor(isDistribution ? color.new(color.red, 90) : na, title="분산 구간")
+
+// BB 스퀴즈 배경
+bgcolor(bbSqueeze ? color.new(color.yellow, 90) : na, title="BB 스퀴즈")
+
+// ============================================
+// 🔮 피봇 포인트 표시
+// ============================================
+plotshape(showPivots and not na(pivotHigh), style=shape.triangledown, location=location.abovebar,
+         color=color.new(color.red, 20), size=size.tiny, title="피봇 고점", offset=-pivotLength)
+plotshape(showPivots and not na(pivotLow), style=shape.triangleup, location=location.belowbar,
+         color=color.new(color.green, 20), size=size.tiny, title="피봇 저점", offset=-pivotLength)
+
+// 피봇 라벨
+if showPivots and not na(pivotHigh)
+    label.new(bar_index - pivotLength, pivotHigh, "H", style=label.style_label_down,
+              color=color.new(color.red, 30), textcolor=color.white, size=size.tiny)
+if showPivots and not na(pivotLow)
+    label.new(bar_index - pivotLength, pivotLow, "L", style=label.style_label_up,
+              color=color.new(color.green, 30), textcolor=color.white, size=size.tiny)
+
+// ============================================
+// 📊 지지/저항 레벨 표시
+// ============================================
+plot(showSR ? recentHigh : na, color=color.new(color.red, 40), linewidth=2, style=plot.style_circles, title="저항선")
+plot(showSR ? recentLow : na, color=color.new(color.green, 40), linewidth=2, style=plot.style_circles, title="지지선")
+plot(showSR ? srMiddle : na, color=color.new(color.gray, 60), linewidth=1, style=plot.style_cross, title="중심선")
+
+// 지지/저항 근처 배경 하이라이트
+bgcolor(showSR and nearResistance ? color.new(color.red, 85) : na, title="저항선 근처")
+bgcolor(showSR and nearSupport ? color.new(color.green, 85) : na, title="지지선 근처")
+
+// ============================================
+// 📈 다이버전스 표시
+// ============================================
+plotshape(showDivergence and bullishDivergence, style=shape.labelup, location=location.belowbar,
+         color=color.new(color.lime, 0), size=size.small, text="Bull\nDiv", textcolor=color.white, title="불리시 다이버전스")
+plotshape(showDivergence and bearishDivergence, style=shape.labeldown, location=location.abovebar,
+         color=color.new(color.red, 0), size=size.small, text="Bear\nDiv", textcolor=color.white, title="베어리시 다이버전스")
+
+// ============================================
+// 🎯 중요 변곡점 구간 하이라이트
+// ============================================
+// 강한 매수 구간 (골든 존)
+bgcolor(strongBuyZone ? color.new(color.lime, 70) : na, title="🟢 강한 매수 구간")
+// 강한 매도 구간 (데스 존)
+bgcolor(strongSellZone ? color.new(color.fuchsia, 70) : na, title="🔴 강한 매도 구간")
+// 변곡점 구간 (다이버전스)
+bgcolor(turningZone ? color.new(color.aqua, 80) : na, title="🔄 변곡점 구간")
+
+// ============================================
+// 신호 라벨 표시
+// ============================================
+
+var label signalLabel = na
+var line tp1Line = na
+var line tp2Line = na
+var line slLine = na
+
+// 모드별 이모지
+string modeEmoji = tradeMode == "선물" ? "⚡" : tradeMode == "현물코인" ? "🪙" : "📈"
+string modeText = tradeMode == "선물" ? "FUTURES" : tradeMode == "현물코인" ? "SPOT" : "STOCK"
+
+if longSignal_final
+    if not na(signalLabel)
+        label.delete(signalLabel)
+    if not na(tp1Line)
+        line.delete(tp1Line)
+    if not na(tp2Line)
+        line.delete(tp2Line)
+    if not na(slLine)
+        line.delete(slLine)
+
+    float labelTp1 = close * (1 + tpPct1/100)
+    float labelTp2 = close * (1 + tpPct2/100)
+    float labelSl = close * (1 - slPct/100)
+
+    signalLabel := label.new(bar_index, low - (high - low) * 0.3,
+                          text=modeEmoji + " LONG [" + modeText + "]\n" +
+                               "진입: $" + str.tostring(close, "#.##") + "\n" +
+                               "점수: " + str.tostring(totalScore, "#.#") + "/28\n" +
+                               "━━━━━━━━━━━━\n" +
+                               "TP1: $" + str.tostring(labelTp1, "#.##") + " (+" + str.tostring(tpPct1, "#.#") + "%)\n" +
+                               "TP2: $" + str.tostring(labelTp2, "#.##") + " (+" + str.tostring(tpPct2, "#.#") + "%)\n" +
+                               "SL: $" + str.tostring(labelSl, "#.##") + " (-" + str.tostring(slPct, "#.#") + "%)\n" +
+                               (isWhale ? "🐋 고래 감지!" : "") +
+                               (isInstitution ? "🐳 기관 감지!" : ""),
+                          style=label.style_label_up,
+                          color=color.new(color.green, 20),
+                          textcolor=color.white, size=size.normal)
+
+    tp1Line := line.new(bar_index, labelTp1, bar_index + 20, labelTp1,
+                       color=color.new(color.green, 0), width=2, style=line.style_dashed)
+    tp2Line := line.new(bar_index, labelTp2, bar_index + 20, labelTp2,
+                       color=color.new(color.green, 0), width=3, style=line.style_solid)
+    slLine := line.new(bar_index, labelSl, bar_index + 20, labelSl,
+                      color=color.new(color.red, 0), width=2, style=line.style_solid)
+
+if shortSignal_final and tradeMode == "선물"
+    if not na(signalLabel)
+        label.delete(signalLabel)
+    if not na(tp1Line)
+        line.delete(tp1Line)
+    if not na(tp2Line)
+        line.delete(tp2Line)
+    if not na(slLine)
+        line.delete(slLine)
+
+    float labelTp1 = close * (1 - tpPct1/100)
+    float labelTp2 = close * (1 - tpPct2/100)
+    float labelSl = close * (1 + slPct/100)
+
+    signalLabel := label.new(bar_index, high + (high - low) * 0.3,
+                          text="⚡ SHORT [FUTURES]\n" +
+                               "진입: $" + str.tostring(close, "#.##") + "\n" +
+                               "점수: " + str.tostring(totalScoreShort, "#.#") + "/28\n" +
+                               "━━━━━━━━━━━━\n" +
+                               "TP1: $" + str.tostring(labelTp1, "#.##") + " (+" + str.tostring(tpPct1, "#.#") + "%)\n" +
+                               "TP2: $" + str.tostring(labelTp2, "#.##") + " (+" + str.tostring(tpPct2, "#.#") + "%)\n" +
+                               "SL: $" + str.tostring(labelSl, "#.##") + " (-" + str.tostring(slPct, "#.#") + "%)\n" +
+                               (whaleSelling ? "🐋 고래 매도!" : "") +
+                               (institutionSelling ? "🐳 기관 매도!" : ""),
+                          style=label.style_label_down,
+                          color=color.new(color.red, 20),
+                          textcolor=color.white, size=size.normal)
+
+    tp1Line := line.new(bar_index, labelTp1, bar_index + 20, labelTp1,
+                       color=color.new(color.green, 0), width=2, style=line.style_dashed)
+    tp2Line := line.new(bar_index, labelTp2, bar_index + 20, labelTp2,
+                       color=color.new(color.green, 0), width=3, style=line.style_solid)
+    slLine := line.new(bar_index, labelSl, bar_index + 20, labelSl,
+                      color=color.new(color.red, 0), width=2, style=line.style_solid)
+
+// EXIT 경고 라벨 (현물/주식)
+if whaleExitSignal
+    label.new(bar_index, high + (high - low) * 0.2,
+              text="⚠️ EXIT 경고\n고래 매도 감지!",
+              style=label.style_label_down,
+              color=color.new(color.orange, 20),
+              textcolor=color.white, size=size.small)
+
+// ============================================
+// 정보 테이블
+// ============================================
+
+var table infoTable = table.new(position.top_right, 2, 20, bgcolor=color.new(color.white, 10), border_width=1)
+
+if barstate.islast
+    table.clear(infoTable, 0, 0, 1, 19)
+
+    // 모드 표시
+    modeColor = tradeMode == "선물" ? color.purple : tradeMode == "현물코인" ? color.orange : color.blue
+    table.cell(infoTable, 0, 0, modeEmoji + " " + modeText, text_color=color.white, text_size=size.normal,
+              bgcolor=color.new(modeColor, 20))
+    table.cell(infoTable, 1, 0, "클로드25", text_color=color.white, text_size=size.normal,
+              bgcolor=color.new(modeColor, 20))
+
+    table.cell(infoTable, 0, 1, "현재가", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 1, "$" + str.tostring(close, "#.##"), text_color=color.black, text_size=size.small)
+
+    // TP/SL 설정
+    table.cell(infoTable, 0, 2, "TP1/TP2/SL", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 2, str.tostring(tpPct1, "#.#") + "/" + str.tostring(tpPct2, "#.#") + "/" + str.tostring(slPct, "#.#") + "%",
+              text_color=color.black, text_size=size.small)
+
+    // 점수
+    table.cell(infoTable, 0, 3, "📊 총점", text_color=color.white, text_size=size.small,
+              bgcolor=color.new(color.gray, 30))
+    table.cell(infoTable, 1, 3, str.tostring(totalScore, "#.#") + "/28",
+              text_color=totalScore >= minSignalStrength ? color.green : color.gray, text_size=size.small)
+
+    // 불장단타왕
+    table.cell(infoTable, 0, 4, "불장단타왕", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 4, str.tostring(bulJangScore, "#") + "/10",
+              text_color=bulJangScore >= 5 ? color.green : color.gray, text_size=size.small)
+
+    // 클로드
+    table.cell(infoTable, 0, 5, "클로드21", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 5, str.tostring(claude21Score, "#") + "/8",
+              text_color=claude21Score >= 5 ? color.green : color.gray, text_size=size.small)
+
+    // 필터
+    table.cell(infoTable, 0, 6, "필터", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 6, str.tostring(filterScore, "#") + "/6",
+              text_color=filterScore >= 4 ? color.green : color.gray, text_size=size.small)
+
+    // 고래 점수
+    table.cell(infoTable, 0, 7, "🐋 고래", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 7, str.tostring(whaleScore, "#") + "/4",
+              text_color=whaleScore >= 2 ? color.green : color.gray, text_size=size.small)
+
+    // ADX (추세 강도)
+    table.cell(infoTable, 0, 8, "📊 ADX", text_color=color.black, text_size=size.small)
+    adxStatus = veryStrongTrend ? "🔥 매우강함" : strongTrend ? "💪 강함" : trendExists ? "✅ 추세" : "⚠️ 횡보"
+    adxColor = veryStrongTrend ? color.green : strongTrend ? color.blue : trendExists ? color.teal : color.red
+    table.cell(infoTable, 1, 8, adxStatus + " (" + str.tostring(adx, "#.#") + ")",
+              text_color=adxColor, text_size=size.small)
+
+    // DI 방향
+    table.cell(infoTable, 0, 9, "DI 방향", text_color=color.black, text_size=size.small)
+    diStatus = bullishDI ? "🟢 상승" : "🔴 하락"
+    table.cell(infoTable, 1, 9, diStatus + " (+" + str.tostring(diPlus, "#.#") + "/-" + str.tostring(diMinus, "#.#") + ")",
+              text_color=bullishDI ? color.green : color.red, text_size=size.small)
+
+    // Open Interest (OI)
+    table.cell(infoTable, 0, 10, "📈 OI", text_color=color.black, text_size=size.small)
+    oiStatus = oiPriceUp ? "🚀 강한상승" : oiPriceDown ? "📉 강한하락" : oiShortSqueeze ? "🔥 숏청산" : oiLongSqueeze ? "💥 롱청산" : oiIncreasing ? "⬆️ 증가" : oiDecreasing ? "⬇️ 감소" : "➡️ 안정"
+    oiColor = oiPriceUp or oiShortSqueeze ? color.green : oiPriceDown or oiLongSqueeze ? color.red : color.gray
+    table.cell(infoTable, 1, 10, oiStatus + " (" + str.tostring(oiChange, "#.##") + "%)",
+              text_color=oiColor, text_size=size.small)
+
+    // Funding Rate (펀딩비)
+    table.cell(infoTable, 0, 11, "💰 펀딩비", text_color=color.black, text_size=size.small)
+    fundingStatus = fundingBearish ? "🔴 롱과열" : fundingBullish ? "🟢 숏과열" : "⚪ 중립"
+    fundingColor = fundingBearish ? color.red : fundingBullish ? color.green : color.gray
+    table.cell(infoTable, 1, 11, fundingStatus + " (" + str.tostring(fundingRate * 100, "#.###") + "%)",
+              text_color=fundingColor, text_size=size.small)
+
+    // StochRSI
+    table.cell(infoTable, 0, 12, "StochRSI", text_color=color.black, text_size=size.small)
+    stochStatus = stochOversold ? "🟢 과매도" : stochOverbought ? "🔴 과매수" : "⚪ 중립"
+    table.cell(infoTable, 1, 12, stochStatus + " (" + str.tostring(stochK, "#.#") + ")",
+              text_color=stochOversold ? color.green : stochOverbought ? color.red : color.gray, text_size=size.small)
+
+    // BB
+    table.cell(infoTable, 0, 13, "BB 상태", text_color=color.black, text_size=size.small)
+    bbStatus = bbSqueeze ? "🟡 스퀴즈" : touchingBBLower ? "🟢 하단" : touchingBBUpper ? "🔴 상단" : "⚪ 중립"
+    table.cell(infoTable, 1, 13, bbStatus,
+              text_color=bbSqueeze ? color.yellow : touchingBBLower ? color.green : touchingBBUpper ? color.red : color.gray,
+              text_size=size.small)
+
+    // 거래량 비율
+    table.cell(infoTable, 0, 14, "거래량 비율", text_color=color.black, text_size=size.small)
+    volColor = isInstitution ? color.purple : isWhale ? color.blue : color.gray
+    volText = isInstitution ? "🐳 기관 " : isWhale ? "🐋 고래 " : ""
+    table.cell(infoTable, 1, 14, volText + str.tostring(volumeRatio, "#.##") + "x",
+              text_color=volColor, text_size=size.small)
+
+    // 매수/매도 압력
+    table.cell(infoTable, 0, 15, "매수 압력", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 15, str.tostring(buyPressure, "#.#") + "%",
+              text_color=buyPressure > 60 ? color.green : buyPressure < 40 ? color.red : color.gray, text_size=size.small)
+
+    // 시장 국면
+    table.cell(infoTable, 0, 16, "시장 국면", text_color=color.black, text_size=size.small)
+    phaseText = isAccumulation ? "📈 누적" : isDistribution ? "📉 분산" : "➡️ 중립"
+    table.cell(infoTable, 1, 16, phaseText,
+              text_color=isAccumulation ? color.green : isDistribution ? color.red : color.gray, text_size=size.small)
+
+    // 상위 타임프레임 트렌드 (선물: 1시간 / 현물,주식: 일봉)
+    string tfHighLabel = tradeMode == "선물" ? "1시간" : "일봉"
+    table.cell(infoTable, 0, 17, tfHighLabel, text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 17, trend_15m_bullish ? "🟢 BULL" : trend_15m_bearish ? "🔴 BEAR" : "⚪ FLAT",
+              text_color=trend_15m_bullish ? color.green : trend_15m_bearish ? color.red : color.gray, text_size=size.small)
+
+    // 중간 타임프레임 트렌드 (선물: 15분 / 현물,주식: 4시간)
+    string tfMidLabel = tradeMode == "선물" ? "15분봉" : "4시간"
+    table.cell(infoTable, 0, 18, tfMidLabel, text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 18, trend_5m_bullish ? "🟢 BULL" : trend_5m_bearish ? "🔴 BEAR" : "⚪ FLAT",
+              text_color=trend_5m_bullish ? color.green : trend_5m_bearish ? color.red : color.gray, text_size=size.small)
+
+    // 최종 신호
+    table.cell(infoTable, 0, 19, "최종 신호", text_color=color.white, text_size=size.small,
+              bgcolor=color.new(color.gray, 30))
+    string finalText = longSignal_final ? "🚀 LONG" : (shortSignal_final and tradeMode == "선물") ? "🔻 SHORT" : whaleExitSignal ? "⚠️ EXIT" : "⏸️ 대기"
+    finalColor = longSignal_final ? color.green : (shortSignal_final and tradeMode == "선물") ? color.red : whaleExitSignal ? color.orange : color.gray
+    table.cell(infoTable, 1, 19, finalText, text_color=finalColor, text_size=size.small)
+
+// ============================================
+// Webhook 알림
+// ============================================
+
+if longSignal_final
+    string jsonData = '{"version":"25",' +
+          '"mode":"' + tradeMode + '",' +
+          '"signal":"LONG",' +
+          '"entry":"' + str.tostring(close, "#.##") + '",' +
+          '"totalScore":"' + str.tostring(totalScore, "#.#") + '",' +
+          '"tp1":"' + str.tostring(close * (1 + tpPct1/100), "#.##") + '",' +
+          '"tp2":"' + str.tostring(close * (1 + tpPct2/100), "#.##") + '",' +
+          '"sl":"' + str.tostring(close * (1 - slPct/100), "#.##") + '",' +
+          '"tp1_pct":"' + str.tostring(tpPct1, "#.#") + '",' +
+          '"tp2_pct":"' + str.tostring(tpPct2, "#.#") + '",' +
+          '"sl_pct":"' + str.tostring(slPct, "#.#") + '",' +
+          '"volume_ratio":"' + str.tostring(volumeRatio, "#.##") + '",' +
+          '"smart_money":"' + (isInstitution ? "INSTITUTION" : isWhale ? "WHALE" : "NONE") + '",' +
+          '"buy_pressure":"' + str.tostring(buyPressure, "#.#") + '",' +
+          '"market_phase":"' + (isAccumulation ? "ACCUMULATION" : isDistribution ? "DISTRIBUTION" : "NEUTRAL") + '",' +
+          '"stochRSI_k":"' + str.tostring(stochK, "#.#") + '",' +
+          '"bb_squeeze":"' + (bbSqueeze ? "true" : "false") + '"}'
+
+    alert(jsonData, freq=alert.freq_once_per_bar)
+
+if shortSignal_final and tradeMode == "선물"
+    string jsonData = '{"version":"25",' +
+          '"mode":"선물",' +
+          '"signal":"SHORT",' +
+          '"entry":"' + str.tostring(close, "#.##") + '",' +
+          '"totalScore":"' + str.tostring(totalScoreShort, "#.#") + '",' +
+          '"tp1":"' + str.tostring(close * (1 - tpPct1/100), "#.##") + '",' +
+          '"tp2":"' + str.tostring(close * (1 - tpPct2/100), "#.##") + '",' +
+          '"sl":"' + str.tostring(close * (1 + slPct/100), "#.##") + '",' +
+          '"tp1_pct":"' + str.tostring(tpPct1, "#.#") + '",' +
+          '"tp2_pct":"' + str.tostring(tpPct2, "#.#") + '",' +
+          '"sl_pct":"' + str.tostring(slPct, "#.#") + '",' +
+          '"volume_ratio":"' + str.tostring(volumeRatio, "#.##") + '",' +
+          '"smart_money":"' + (institutionSelling ? "INSTITUTION" : whaleSelling ? "WHALE" : "NONE") + '",' +
+          '"sell_pressure":"' + str.tostring(sellPressure, "#.#") + '",' +
+          '"market_phase":"' + (isDistribution ? "DISTRIBUTION" : "NEUTRAL") + '",' +
+          '"stochRSI_k":"' + str.tostring(stochK, "#.#") + '",' +
+          '"bb_squeeze":"' + (bbSqueeze ? "true" : "false") + '"}'
+
+    alert(jsonData, freq=alert.freq_once_per_bar)
+
+if whaleExitSignal
+    string jsonData = '{"version":"25",' +
+          '"mode":"' + tradeMode + '",' +
+          '"signal":"EXIT",' +
+          '"reason":"WHALE_SELLING",' +
+          '"current_price":"' + str.tostring(close, "#.##") + '",' +
+          '"volume_ratio":"' + str.tostring(volumeRatio, "#.##") + '",' +
+          '"sell_pressure":"' + str.tostring(sellPressure, "#.#") + '"}'
+
+    alert(jsonData, freq=alert.freq_once_per_bar)
