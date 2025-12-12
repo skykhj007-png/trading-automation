@@ -42,6 +42,20 @@ var VIRTUAL_TRADING = {
   POSITION_SIZE: 100
 };
 
+// 지원하는 마켓 목록 (Binance 심볼)
+var SUPPORTED_MARKETS = {
+  'BTC-USDT': 'BTCUSDT',
+  'BTCUSDT': 'BTCUSDT',
+  'ETH-USDT': 'ETHUSDT',
+  'ETHUSDT': 'ETHUSDT',
+  'XRP-USDT': 'XRPUSDT',
+  'XRPUSDT': 'XRPUSDT',
+  'SOL-USDT': 'SOLUSDT',
+  'SOLUSDT': 'SOLUSDT',
+  'DOGE-USDT': 'DOGEUSDT',
+  'DOGEUSDT': 'DOGEUSDT'
+};
+
 // ============================================
 // Webhook 엔드포인트
 // ============================================
@@ -85,8 +99,34 @@ function doGet(e) {
 }
 
 // ============================================
-// 신호 처리 (중복 방지 포함)
+// 신호 처리 (마켓별 분리 - 중복 방지 포함)
 // ============================================
+
+/**
+ * 마켓 심볼 정규화 (가격으로 마켓 추정)
+ */
+function detectMarket(data) {
+  var entryPrice = parseFloat(data.entry);
+  var market = data.market || '';
+
+  // 마켓이 명시되어 있으면 그대로 사용
+  if (market && SUPPORTED_MARKETS[market]) {
+    return market;
+  }
+
+  // 가격으로 마켓 추정
+  if (entryPrice > 50000) {
+    return 'BTC-USDT';  // BTC는 보통 5만달러 이상
+  } else if (entryPrice > 1000) {
+    return 'ETH-USDT';  // ETH는 보통 1000~5000달러
+  } else if (entryPrice > 100) {
+    return 'SOL-USDT';  // SOL은 보통 100~300달러
+  } else if (entryPrice > 1) {
+    return 'XRP-USDT';  // XRP는 보통 0.5~3달러
+  } else {
+    return 'DOGE-USDT'; // DOGE는 보통 0.1달러 이하
+  }
+}
 
 function processSignal(data) {
   var entryPrice = parseFloat(data.entry);
@@ -94,17 +134,23 @@ function processSignal(data) {
   var tp2Price = parseFloat(data.tp2) || 0;
   var slPrice = parseFloat(data.sl) || 0;
   var tradeMode = data.mode || '선물'; // 기본값: 선물
-  var version = data.version || '24';
+  var version = data.version || '25';
+
+  // 마켓 감지 (BTC, ETH 등)
+  var market = detectMarket(data);
+  data.market = market;  // 데이터에 마켓 추가
+
+  Logger.log('📊 신호 수신: ' + market + ' ' + data.signal + ' @ $' + entryPrice.toFixed(2));
 
   // EXIT 신호 처리 (현물/주식에서 고래 매도 감지)
   if (data.signal === 'EXIT') {
-    var existingPosition = getPosition();
+    var existingPosition = getPositionByMarket(market);
     if (existingPosition && existingPosition.status === 'OPEN') {
-      Logger.log('EXIT 신호 수신 - 포지션 청산 경고');
+      Logger.log('EXIT 신호 수신 - ' + market + ' 포지션 청산 경고');
       logSignalToSheet(data, entryPrice, 0, 0, 0, '⚠️ EXIT 경고');
-      return { action: 'exit_warning', reason: data.reason || 'WHALE_SELLING' };
+      return { action: 'exit_warning', market: market, reason: data.reason || 'WHALE_SELLING' };
     }
-    return { action: 'no_position', reason: 'EXIT 신호지만 열린 포지션 없음' };
+    return { action: 'no_position', market: market, reason: 'EXIT 신호지만 열린 포지션 없음' };
   }
 
   // 모드별 SHORT 제한 체크
@@ -112,44 +158,49 @@ function processSignal(data) {
   if (data.signal === 'SHORT' && !modeSettings.shortEnabled) {
     Logger.log(tradeMode + ' 모드에서 SHORT 신호 무시');
     logSignalToSheet(data, entryPrice, tp1Price, tp2Price, slPrice, '[' + tradeMode + '] SHORT 비활성');
-    return { action: 'skipped', reason: tradeMode + '에서 SHORT 비활성' };
+    return { action: 'skipped', market: market, reason: tradeMode + '에서 SHORT 비활성' };
   }
 
-  // 중복 신호 체크
-  var existingPosition = getPosition();
+  // 마켓별 중복 신호 체크
+  var existingPosition = getPositionByMarket(market);
   if (existingPosition && existingPosition.status === 'OPEN') {
-    Logger.log('이미 열린 포지션 있음 - 신호 무시');
-    Logger.log('기존: ' + existingPosition.signal + ' @ ' + Math.floor(existingPosition.entryPrice / 1000));
-    Logger.log('새로운: ' + data.signal + ' @ ' + Math.floor(entryPrice / 1000));
+    Logger.log('[' + market + '] 이미 열린 포지션 있음 - 신호 무시');
+    Logger.log('기존: ' + existingPosition.signal + ' @ $' + existingPosition.entryPrice.toFixed(2));
+    Logger.log('새로운: ' + data.signal + ' @ $' + entryPrice.toFixed(2));
 
-    logSignalToSheet(data, entryPrice, tp1Price, tp2Price, slPrice, '[중복] 무시됨');
+    logSignalToSheet(data, entryPrice, tp1Price, tp2Price, slPrice, '[' + market + ' 중복] 무시됨');
 
-    return { action: 'skipped', reason: '이미 포지션 보유중' };
+    return { action: 'skipped', market: market, reason: market + ' 이미 포지션 보유중' };
   }
 
   // 신호 기록
-  var status = '대기중 [' + tradeMode + ']';
+  var status = '대기중 [' + market + ' ' + tradeMode + ']';
   logSignalToSheet(data, entryPrice, tp1Price, tp2Price, slPrice, status);
 
-  // 포지션 저장 (모드 정보 포함)
-  savePosition(data, entryPrice, tp1Price, tp2Price, slPrice, tradeMode);
+  // 마켓별 포지션 저장
+  savePositionByMarket(market, data, entryPrice, tp1Price, tp2Price, slPrice, tradeMode);
 
   return {
     action: 'signal_recorded',
     signal: data.signal,
+    market: market,
     mode: tradeMode,
     version: version
   };
 }
 
 // ============================================
-// 포지션 관리
+// 포지션 관리 (마켓별 분리)
 // ============================================
 
-function savePosition(data, entryPrice, tp1Price, tp2Price, slPrice, tradeMode) {
+/**
+ * 마켓별 포지션 저장
+ */
+function savePositionByMarket(market, data, entryPrice, tp1Price, tp2Price, slPrice, tradeMode) {
   var props = PropertiesService.getScriptProperties();
 
   var position = {
+    market: market,
     signal: data.signal,
     entryPrice: entryPrice,
     tp1Price: tp1Price,
@@ -164,14 +215,92 @@ function savePosition(data, entryPrice, tp1Price, tp2Price, slPrice, tradeMode) 
     volumeRatio: data.volume_ratio || '0'
   };
 
-  props.setProperty('CURRENT_POSITION', JSON.stringify(position));
-  Logger.log('포지션 저장: ' + data.signal + ' [' + position.mode + '] @ ' + Math.floor(entryPrice / 1000));
+  var key = 'POSITION_' + market.replace('-', '_');
+  props.setProperty(key, JSON.stringify(position));
+  Logger.log('📌 [' + market + '] 포지션 저장: ' + data.signal + ' @ $' + entryPrice.toFixed(2));
+}
+
+/**
+ * 마켓별 포지션 조회
+ */
+function getPositionByMarket(market) {
+  var props = PropertiesService.getScriptProperties();
+  var key = 'POSITION_' + market.replace('-', '_');
+  var posData = props.getProperty(key);
+  return posData ? JSON.parse(posData) : null;
+}
+
+/**
+ * 마켓별 포지션 삭제
+ */
+function clearPositionByMarket(market) {
+  var props = PropertiesService.getScriptProperties();
+  var key = 'POSITION_' + market.replace('-', '_');
+  props.deleteProperty(key);
+  Logger.log('🗑️ [' + market + '] 포지션 삭제됨');
+}
+
+/**
+ * 모든 열린 포지션 조회
+ */
+function getAllOpenPositions() {
+  var props = PropertiesService.getScriptProperties();
+  var allProps = props.getProperties();
+  var positions = [];
+
+  for (var key in allProps) {
+    if (key.startsWith('POSITION_')) {
+      try {
+        var pos = JSON.parse(allProps[key]);
+        if (pos.status === 'OPEN') {
+          positions.push(pos);
+        }
+      } catch (e) {
+        // 파싱 실패 무시
+      }
+    }
+  }
+
+  return positions;
+}
+
+/**
+ * 모든 포지션 삭제
+ */
+function clearAllPositions() {
+  var props = PropertiesService.getScriptProperties();
+  var allProps = props.getProperties();
+
+  for (var key in allProps) {
+    if (key.startsWith('POSITION_')) {
+      props.deleteProperty(key);
+      Logger.log('삭제: ' + key);
+    }
+  }
+
+  // 기존 단일 포지션도 삭제
+  props.deleteProperty('CURRENT_POSITION');
+
+  Logger.log('🗑️ 모든 포지션 삭제 완료');
+}
+
+// 하위 호환성을 위한 기존 함수 (단일 포지션)
+function savePosition(data, entryPrice, tp1Price, tp2Price, slPrice, tradeMode) {
+  var market = detectMarket(data);
+  savePositionByMarket(market, data, entryPrice, tp1Price, tp2Price, slPrice, tradeMode);
 }
 
 function getPosition() {
+  // 기존 단일 포지션 확인
   var props = PropertiesService.getScriptProperties();
   var posData = props.getProperty('CURRENT_POSITION');
-  return posData ? JSON.parse(posData) : null;
+  if (posData) {
+    return JSON.parse(posData);
+  }
+
+  // 열린 포지션 중 첫 번째 반환
+  var positions = getAllOpenPositions();
+  return positions.length > 0 ? positions[0] : null;
 }
 
 function clearPosition() {
@@ -870,22 +999,29 @@ function testDuplicateSignal() {
 }
 
 function checkPosition() {
-  var position = getPosition();
-  if (position) {
-    Logger.log('=== 현재 포지션 ===');
-    Logger.log('  버전: V' + (position.version || '24'));
+  var positions = getAllOpenPositions();
+
+  if (positions.length === 0) {
+    Logger.log('열린 포지션 없음');
+    return;
+  }
+
+  Logger.log('=== 열린 포지션 목록 (' + positions.length + '개) ===');
+
+  for (var i = 0; i < positions.length; i++) {
+    var position = positions[i];
+    Logger.log('');
+    Logger.log('📊 [' + (position.market || 'UNKNOWN') + ']');
+    Logger.log('  버전: V' + (position.version || '25'));
     Logger.log('  모드: ' + (position.mode || '선물'));
     Logger.log('  신호: ' + position.signal);
-    Logger.log('  진입가: $' + position.entryPrice);
-    Logger.log('  TP1: $' + position.tp1Price);
-    Logger.log('  TP2: $' + position.tp2Price);
-    Logger.log('  SL: $' + position.slPrice);
+    Logger.log('  진입가: $' + position.entryPrice.toFixed(2));
+    Logger.log('  TP1: $' + position.tp1Price.toFixed(2));
+    Logger.log('  TP2: $' + position.tp2Price.toFixed(2));
+    Logger.log('  SL: $' + position.slPrice.toFixed(2));
     Logger.log('  TP1 달성: ' + position.tp1Hit);
     Logger.log('  상태: ' + position.status);
     Logger.log('  고래: ' + (position.smartMoney || 'NONE'));
-    Logger.log('  거래량 비율: ' + (position.volumeRatio || '0') + 'x');
-  } else {
-    Logger.log('열린 포지션 없음');
   }
 }
 
@@ -902,42 +1038,64 @@ function checkBalance() {
 }
 
 function forceClosePosition() {
-  clearPosition();
-  Logger.log('포지션 강제 삭제 완료');
+  clearAllPositions();
+  Logger.log('모든 포지션 강제 삭제 완료');
 }
 
 // ============================================
-// 🔄 자동 가격 모니터링 & 청산
+// 🔄 자동 가격 모니터링 & 청산 (마켓별)
 // ============================================
 
 /**
- * 현재 BTC 가격 조회 (Binance API)
+ * 마켓별 현재 가격 조회 (Binance API)
  */
-function getCurrentPrice() {
+function getPriceByMarket(market) {
   try {
-    var url = 'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT';
+    var symbol = SUPPORTED_MARKETS[market] || 'BTCUSDT';
+    var url = 'https://api.binance.com/api/v3/ticker/price?symbol=' + symbol;
     var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
     var data = JSON.parse(response.getContentText());
     return parseFloat(data.price);
   } catch (error) {
-    Logger.log('가격 조회 실패: ' + error.toString());
+    Logger.log('[' + market + '] 가격 조회 실패: ' + error.toString());
     return null;
   }
 }
 
 /**
- * 🎯 자동 가격 체크 및 청산 (1분마다 트리거로 실행)
+ * 기존 호환성을 위한 BTC 가격 조회
+ */
+function getCurrentPrice() {
+  return getPriceByMarket('BTC-USDT');
+}
+
+/**
+ * 🎯 자동 가격 체크 및 청산 (1분마다 트리거로 실행) - 모든 마켓
  */
 function checkPriceAndAutoClose() {
-  var position = getPosition();
+  var positions = getAllOpenPositions();
 
-  if (!position || position.status !== 'OPEN') {
+  if (positions.length === 0) {
     return; // 열린 포지션 없음
   }
 
-  var currentPrice = getCurrentPrice();
+  Logger.log('=== 가격 체크 (' + positions.length + '개 포지션) ===');
+
+  for (var i = 0; i < positions.length; i++) {
+    var position = positions[i];
+    checkSinglePosition(position);
+  }
+}
+
+/**
+ * 단일 포지션 체크
+ */
+function checkSinglePosition(position) {
+  var market = position.market || 'BTC-USDT';
+  var currentPrice = getPriceByMarket(market);
+
   if (!currentPrice) {
-    Logger.log('가격 조회 실패 - 다음 체크 대기');
+    Logger.log('[' + market + '] 가격 조회 실패 - 스킵');
     return;
   }
 
@@ -948,36 +1106,32 @@ function checkPriceAndAutoClose() {
   var slPrice = position.slPrice;
   var tp1Hit = position.tp1Hit || false;
 
-  Logger.log('=== 가격 체크 ===');
-  Logger.log('현재가: $' + currentPrice.toFixed(2));
-  Logger.log('포지션: ' + signal + ' @ $' + entryPrice.toFixed(2));
-  Logger.log('TP1: $' + tp1Price.toFixed(2) + ' | TP2: $' + tp2Price.toFixed(2) + ' | SL: $' + slPrice.toFixed(2));
-  Logger.log('TP1 달성: ' + tp1Hit);
+  Logger.log('[' + market + '] 현재가: $' + currentPrice.toFixed(2) + ' | ' + signal + ' @ $' + entryPrice.toFixed(2));
 
   // LONG 포지션 체크
   if (signal === 'LONG') {
     // TP2 도달 체크 (TP1 이후)
     if (tp1Hit && currentPrice >= tp2Price) {
-      Logger.log('✅✅ TP2 도달! 전량 익절');
-      autoRecordClose(position, 'TP2', currentPrice);
+      Logger.log('✅✅ [' + market + '] TP2 도달! 전량 익절');
+      autoRecordCloseByMarket(position, 'TP2', currentPrice);
       return;
     }
 
     // TP1 도달 체크
     if (!tp1Hit && currentPrice >= tp1Price) {
-      Logger.log('✅ TP1 도달! 50% 익절');
-      autoRecordTP1(position, currentPrice);
+      Logger.log('✅ [' + market + '] TP1 도달! 50% 익절');
+      autoRecordTP1ByMarket(position, currentPrice);
       return;
     }
 
     // SL 도달 체크
     if (currentPrice <= slPrice) {
       if (tp1Hit) {
-        Logger.log('⚠️ TP1 후 SL 도달');
-        autoRecordClose(position, 'TP1 후 SL', currentPrice);
+        Logger.log('⚠️ [' + market + '] TP1 후 SL 도달');
+        autoRecordCloseByMarket(position, 'TP1 후 SL', currentPrice);
       } else {
-        Logger.log('❌ SL 도달! 손절');
-        autoRecordClose(position, 'SL', currentPrice);
+        Logger.log('❌ [' + market + '] SL 도달! 손절');
+        autoRecordCloseByMarket(position, 'SL', currentPrice);
       }
       return;
     }
@@ -987,38 +1141,37 @@ function checkPriceAndAutoClose() {
   if (signal === 'SHORT') {
     // TP2 도달 체크 (TP1 이후)
     if (tp1Hit && currentPrice <= tp2Price) {
-      Logger.log('✅✅ TP2 도달! 전량 익절');
-      autoRecordClose(position, 'TP2', currentPrice);
+      Logger.log('✅✅ [' + market + '] TP2 도달! 전량 익절');
+      autoRecordCloseByMarket(position, 'TP2', currentPrice);
       return;
     }
 
     // TP1 도달 체크
     if (!tp1Hit && currentPrice <= tp1Price) {
-      Logger.log('✅ TP1 도달! 50% 익절');
-      autoRecordTP1(position, currentPrice);
+      Logger.log('✅ [' + market + '] TP1 도달! 50% 익절');
+      autoRecordTP1ByMarket(position, currentPrice);
       return;
     }
 
     // SL 도달 체크
     if (currentPrice >= slPrice) {
       if (tp1Hit) {
-        Logger.log('⚠️ TP1 후 SL 도달');
-        autoRecordClose(position, 'TP1 후 SL', currentPrice);
+        Logger.log('⚠️ [' + market + '] TP1 후 SL 도달');
+        autoRecordCloseByMarket(position, 'TP1 후 SL', currentPrice);
       } else {
-        Logger.log('❌ SL 도달! 손절');
-        autoRecordClose(position, 'SL', currentPrice);
+        Logger.log('❌ [' + market + '] SL 도달! 손절');
+        autoRecordCloseByMarket(position, 'SL', currentPrice);
       }
       return;
     }
   }
-
-  Logger.log('📊 가격 범위 내 - 포지션 유지');
 }
 
 /**
- * TP1 자동 기록 (50% 청산, 포지션 유지)
+ * TP1 자동 기록 - 마켓별 (50% 청산, 포지션 유지)
  */
-function autoRecordTP1(position, currentPrice) {
+function autoRecordTP1ByMarket(position, currentPrice) {
+  var market = position.market || 'BTC-USDT';
   var profitPercent;
 
   if (position.signal === 'LONG') {
@@ -1038,25 +1191,28 @@ function autoRecordTP1(position, currentPrice) {
   position.tp1HitPrice = currentPrice;
   position.tp1HitTime = new Date().toISOString();
 
+  // 마켓별 포지션 업데이트
   var props = PropertiesService.getScriptProperties();
-  props.setProperty('CURRENT_POSITION', JSON.stringify(position));
+  var key = 'POSITION_' + market.replace('-', '_');
+  props.setProperty(key, JSON.stringify(position));
 
   // 알림 전송
-  sendAutoNotification('✅ TP1 도달',
-    position.signal + ' 포지션 TP1 도달!\n\n' +
+  sendAutoNotification('✅ [' + market + '] TP1 도달',
+    market + ' ' + position.signal + ' 포지션 TP1 도달!\n\n' +
     '진입가: $' + position.entryPrice.toFixed(2) + '\n' +
     'TP1 청산가: $' + currentPrice.toFixed(2) + '\n' +
     '수익률: +' + halfProfit.toFixed(2) + '% (50%)\n\n' +
     '남은 50%는 TP2 또는 SL 대기 중'
   );
 
-  Logger.log('TP1 기록 완료: +' + halfProfit.toFixed(2) + '%');
+  Logger.log('[' + market + '] TP1 기록 완료: +' + halfProfit.toFixed(2) + '%');
 }
 
 /**
- * 자동 청산 기록 (포지션 종료)
+ * 자동 청산 기록 - 마켓별 (포지션 종료)
  */
-function autoRecordClose(position, exitType, currentPrice) {
+function autoRecordCloseByMarket(position, exitType, currentPrice) {
+  var market = position.market || 'BTC-USDT';
   var profitPercent;
 
   if (position.signal === 'LONG') {
@@ -1078,8 +1234,8 @@ function autoRecordClose(position, exitType, currentPrice) {
   var emoji = exitType.indexOf('TP') >= 0 ? '✅' : '❌';
   var resultText = actualProfit >= 0 ? '+' + actualProfit.toFixed(2) : actualProfit.toFixed(2);
 
-  sendAutoNotification(emoji + ' ' + exitType,
-    position.signal + ' 포지션 청산!\n\n' +
+  sendAutoNotification(emoji + ' [' + market + '] ' + exitType,
+    market + ' ' + position.signal + ' 포지션 청산!\n\n' +
     '진입가: $' + position.entryPrice.toFixed(2) + '\n' +
     '청산가: $' + currentPrice.toFixed(2) + '\n' +
     '청산유형: ' + exitType + '\n' +
@@ -1087,10 +1243,19 @@ function autoRecordClose(position, exitType, currentPrice) {
     (position.tp1Hit ? '(TP1 달성 후 청산)' : '')
   );
 
-  // 포지션 삭제
-  clearPosition();
+  // 마켓별 포지션 삭제
+  clearPositionByMarket(market);
 
-  Logger.log(exitType + ' 기록 완료: ' + resultText + '%');
+  Logger.log('[' + market + '] ' + exitType + ' 기록 완료: ' + resultText + '%');
+}
+
+// 하위 호환성을 위한 기존 함수
+function autoRecordTP1(position, currentPrice) {
+  autoRecordTP1ByMarket(position, currentPrice);
+}
+
+function autoRecordClose(position, exitType, currentPrice) {
+  autoRecordCloseByMarket(position, exitType, currentPrice);
 }
 
 /**
@@ -1146,9 +1311,13 @@ function logAutoTradeResult(position, exitType, exitPrice, profitPercent) {
   var entryTime = position.entryTime ? new Date(position.entryTime) : now;
   var holdingMinutes = Math.round((now - entryTime) / 1000 / 60);
 
+  // 마켓 정보
+  var market = position.market || 'BTC-USDT';
+
   var row = [
     Utilities.formatDate(now, 'Asia/Seoul', 'yyyy-MM-dd'),
     Utilities.formatDate(now, 'Asia/Seoul', 'HH:mm:ss'),
+    market,
     position.signal,
     '$' + position.entryPrice.toFixed(2),
     '$' + exitPrice.toFixed(2),
@@ -1165,28 +1334,28 @@ function logAutoTradeResult(position, exitType, exitPrice, profitPercent) {
   var lastRow = sheet.getLastRow();
   sheet.getRange(lastRow, 1, 1, row.length).setBackground(bgColor);
 
-  // 수익률 색상
+  // 수익률 색상 (열 번호 +1 마켓 추가됨)
   if (profitPercent > 0) {
-    sheet.getRange(lastRow, 7).setFontColor('#2E7D32').setFontWeight('bold');
     sheet.getRange(lastRow, 8).setFontColor('#2E7D32').setFontWeight('bold');
+    sheet.getRange(lastRow, 9).setFontColor('#2E7D32').setFontWeight('bold');
   } else if (profitPercent < 0) {
-    sheet.getRange(lastRow, 7).setFontColor('#C62828').setFontWeight('bold');
     sheet.getRange(lastRow, 8).setFontColor('#C62828').setFontWeight('bold');
+    sheet.getRange(lastRow, 9).setFontColor('#C62828').setFontWeight('bold');
   }
 
-  // 누적수익률 색상
+  // 누적수익률 색상 (열 번호 +1 마켓 추가됨)
   if (totalReturnPercent > 0) {
-    sheet.getRange(lastRow, 10).setFontColor('#2E7D32').setFontWeight('bold');
+    sheet.getRange(lastRow, 11).setFontColor('#2E7D32').setFontWeight('bold');
   } else if (totalReturnPercent < 0) {
-    sheet.getRange(lastRow, 10).setFontColor('#C62828').setFontWeight('bold');
+    sheet.getRange(lastRow, 11).setFontColor('#C62828').setFontWeight('bold');
   }
 
-  sheet.getRange(lastRow, 9).setFontWeight('bold').setBackground('#E3F2FD');
+  sheet.getRange(lastRow, 10).setFontWeight('bold').setBackground('#E3F2FD');
 
   // 통계 업데이트
   updateStatistics(sheet, newBalance, totalReturnPercent, isWin, exitType);
 
-  Logger.log('자동 거래 기록: ' + emoji + ' | 잔고: $' + newBalance.toFixed(2) + ' | 누적: ' + totalReturnPercent.toFixed(2) + '%');
+  Logger.log('[' + market + '] 자동 거래 기록: ' + emoji + ' | 잔고: $' + newBalance.toFixed(2) + ' | 누적: ' + totalReturnPercent.toFixed(2) + '%');
 }
 
 /**
