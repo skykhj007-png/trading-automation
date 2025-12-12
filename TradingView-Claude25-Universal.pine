@@ -798,6 +798,7 @@ if barstate.islast
 
 if longSignal_final
     string jsonData = '{"version":"25",' +
+          '"market":"' + syminfo.ticker + '",' +
           '"mode":"' + tradeMode + '",' +
           '"signal":"LONG",' +
           '"entry":"' + str.tostring(close, "#.##") + '",' +
@@ -819,6 +820,7 @@ if longSignal_final
 
 if shortSignal_final and tradeMode == "선물"
     string jsonData = '{"version":"25",' +
+          '"market":"' + syminfo.ticker + '",' +
           '"mode":"선물",' +
           '"signal":"SHORT",' +
           '"entry":"' + str.tostring(close, "#.##") + '",' +
@@ -840,6 +842,7 @@ if shortSignal_final and tradeMode == "선물"
 
 if whaleExitSignal
     string jsonData = '{"version":"25",' +
+          '"market":"' + syminfo.ticker + '",' +
           '"mode":"' + tradeMode + '",' +
           '"signal":"EXIT",' +
           '"reason":"WHALE_SELLING",' +

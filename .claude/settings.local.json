@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(curl:*)",
+      "Bash(\"https://script.google.com/macros/s/AKfycbxNZUjF4mSL7VioSAE3ZVfnP1m1BXbDwY5qmjSgZfKO91GiOJWKnFrNR0Dsq0iOTv69/exec\")",
+      "Bash(\"https://script.google.com/macros/s/AKfycbwKxvNYuMuZRXai7sIWOiyJKgxg7R3J45G3fWhJfJD7tBbWvsydreETG1m6lBePpbQ5/exec\")"
     ],
     "deny": [],
     "ask": []

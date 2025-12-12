@@ -103,28 +103,42 @@ function doGet(e) {
 // ============================================
 
 /**
- * 마켓 심볼 정규화 (가격으로 마켓 추정)
+ * 마켓 심볼 정규화 (TradingView ticker → 표준 형식)
  */
 function detectMarket(data) {
-  var entryPrice = parseFloat(data.entry);
   var market = data.market || '';
 
-  // 마켓이 명시되어 있으면 그대로 사용
-  if (market && SUPPORTED_MARKETS[market]) {
-    return market;
+  // TradingView ticker 형식 정규화
+  // 예: "BTCUSDT.P", "ETHUSDT", "BTCUSDT" → "BTC-USDT", "ETH-USDT"
+  if (market) {
+    // .P (선물) 제거
+    market = market.replace('.P', '').replace('.p', '');
+
+    // BTCUSDT → BTC-USDT 변환
+    if (market.indexOf('BTC') >= 0) return 'BTC-USDT';
+    if (market.indexOf('ETH') >= 0) return 'ETH-USDT';
+    if (market.indexOf('SOL') >= 0) return 'SOL-USDT';
+    if (market.indexOf('XRP') >= 0) return 'XRP-USDT';
+    if (market.indexOf('DOGE') >= 0) return 'DOGE-USDT';
+
+    // 이미 지원 형식이면 그대로 반환
+    if (SUPPORTED_MARKETS[market]) {
+      return market;
+    }
   }
 
-  // 가격으로 마켓 추정
+  // 마켓 정보 없으면 가격으로 추정 (fallback)
+  var entryPrice = parseFloat(data.entry);
   if (entryPrice > 50000) {
-    return 'BTC-USDT';  // BTC는 보통 5만달러 이상
+    return 'BTC-USDT';
   } else if (entryPrice > 1000) {
-    return 'ETH-USDT';  // ETH는 보통 1000~5000달러
+    return 'ETH-USDT';
   } else if (entryPrice > 100) {
-    return 'SOL-USDT';  // SOL은 보통 100~300달러
+    return 'SOL-USDT';
   } else if (entryPrice > 1) {
-    return 'XRP-USDT';  // XRP는 보통 0.5~3달러
+    return 'XRP-USDT';
   } else {
-    return 'DOGE-USDT'; // DOGE는 보통 0.1달러 이하
+    return 'DOGE-USDT';
   }
 }
 
