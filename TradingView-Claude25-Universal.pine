@@ -40,6 +40,29 @@ useMultiTF = input.bool(true, title="멀티타임프레임 필터")
 useADXFilter = input.bool(false, title="ADX 필터 사용", tooltip="ON: 횡보장 필터링 (엄격), OFF: ADX는 보너스 점수만")
 
 // ============================================
+// 👶 초보자 모드 설정
+// ============================================
+beginnerMode = input.bool(true, title="👶 초보자 모드", tooltip="ON: 쉬운 설명 패널 표시, OFF: 전문가용 상세 정보만")
+showDetailTable = input.bool(true, title="📊 상세 테이블 표시", tooltip="우측 상세 정보 테이블 표시 여부")
+
+// ============================================
+// 📍 테이블 위치 설정
+// ============================================
+beginnerTablePos = input.string("좌측 상단", title="👶 초보자 패널 위치", options=["좌측 상단", "좌측 하단", "우측 상단", "우측 하단", "중앙 상단", "중앙 하단"])
+detailTablePos = input.string("우측 상단", title="📊 상세 테이블 위치", options=["좌측 상단", "좌측 하단", "우측 상단", "우측 하단", "중앙 상단", "중앙 하단"])
+
+// 위치 변환 함수
+getTablePosition(posStr) =>
+    switch posStr
+        "좌측 상단" => position.top_left
+        "좌측 하단" => position.bottom_left
+        "우측 상단" => position.top_right
+        "우측 하단" => position.bottom_right
+        "중앙 상단" => position.top_center
+        "중앙 하단" => position.bottom_center
+        => position.top_right
+
+// ============================================
 // 🐋 고래 감지 설정
 // ============================================
 whaleMultiplier = input.float(2.0, title="고래 감지 배수", minval=1.5, maxval=5.0, step=0.5)
@@ -666,19 +689,105 @@ if whaleExitSignal
               textcolor=color.white, size=size.small)
 
 // ============================================
-// 정보 테이블
+// 👶 초보자용 간단 패널
 // ============================================
 
-var table infoTable = table.new(position.top_right, 2, 20, bgcolor=color.new(color.white, 10), border_width=1)
+var table beginnerTable = table.new(getTablePosition(beginnerTablePos), 1, 12, bgcolor=color.new(color.white, 5), border_width=2)
 
-if barstate.islast
-    table.clear(infoTable, 0, 0, 1, 19)
+if barstate.islast and beginnerMode
+    table.clear(beginnerTable, 0, 0, 0, 11)
+
+    // 종합 판단 계산
+    bool overallBullish = bullishDI and (trend_15m_bullish or trend_5m_bullish) and close > ma50
+    bool overallBearish = bearishDI and (trend_15m_bearish or trend_5m_bearish) and close < ma50
+    bool isGoodLong = overallBullish and totalScore >= minSignalStrength and (isWhale ? whaleBuying : true)
+    bool isGoodShort = overallBearish and totalScoreShort >= minSignalStrength and (isWhale ? whaleSelling : true)
+    bool isDanger = (overallBullish and whaleSelling) or (overallBearish and whaleBuying) or noTrend
+
+    // 헤더
+    color headerColor = isGoodLong ? color.green : isGoodShort ? color.red : isDanger ? color.orange : color.gray
+    string headerText = isGoodLong ? "🟢 매수 좋음!" : isGoodShort ? "🔴 매도 좋음!" : isDanger ? "⚠️ 위험!" : "⏸️ 관망"
+    table.cell(beginnerTable, 0, 0, "━━ " + headerText + " ━━", text_color=color.white, text_size=size.normal,
+              bgcolor=color.new(headerColor, 20))
+
+    // 1. 지금 시장은?
+    table.cell(beginnerTable, 0, 1, "📊 지금 시장은?", text_color=color.black, text_size=size.small,
+              bgcolor=color.new(color.gray, 80))
+    string marketStatus = overallBullish ? "📈 오르는 중!" : overallBearish ? "📉 내리는 중!" : "➡️ 방향 없음"
+    color marketColor = overallBullish ? color.green : overallBearish ? color.red : color.gray
+    table.cell(beginnerTable, 0, 2, marketStatus, text_color=marketColor, text_size=size.small)
+
+    // 2. 추세 강도는?
+    string strengthText = veryStrongTrend ? "💪 아주 강함 - 따라가기 좋음" : strongTrend ? "✅ 강함 - 진입 가능" : trendExists ? "🔸 보통 - 주의 필요" : "⚠️ 약함 - 진입 위험"
+    color strengthColor = veryStrongTrend ? color.green : strongTrend ? color.blue : trendExists ? color.orange : color.red
+    table.cell(beginnerTable, 0, 3, strengthText, text_color=strengthColor, text_size=size.small)
+
+    // 3. 큰손들은?
+    table.cell(beginnerTable, 0, 4, "🐋 큰손(고래)들은?", text_color=color.black, text_size=size.small,
+              bgcolor=color.new(color.gray, 80))
+    string whaleText = institutionBuying ? "🐳 기관이 사는 중!" : institutionSelling ? "🐳 기관이 파는 중!" : whaleBuying ? "🐋 고래가 사는 중" : whaleSelling ? "🐋 고래가 파는 중" : isWhale ? "🐋 고래 활동 감지" : "🦐 큰손 없음"
+    color whaleColor = (institutionBuying or whaleBuying) ? color.green : (institutionSelling or whaleSelling) ? color.red : color.gray
+    table.cell(beginnerTable, 0, 5, whaleText, text_color=whaleColor, text_size=size.small)
+
+    // 4. 매수/매도 세력
+    string pressureText = buyPressure >= 70 ? "🟢 매수세 강함!" : buyPressure >= 55 ? "🟢 매수 우위" : buyPressure <= 30 ? "🔴 매도세 강함!" : buyPressure <= 45 ? "🔴 매도 우위" : "⚪ 균형"
+    color pressureColor = buyPressure >= 55 ? color.green : buyPressure <= 45 ? color.red : color.gray
+    table.cell(beginnerTable, 0, 6, pressureText + " (" + str.tostring(buyPressure, "#") + "%)", text_color=pressureColor, text_size=size.small)
+
+    // 5. 지금 들어가도 될까?
+    table.cell(beginnerTable, 0, 7, "🎯 지금 들어가도 될까?", text_color=color.black, text_size=size.small,
+              bgcolor=color.new(color.gray, 80))
+    string adviceText = ""
+    color adviceColor = color.gray
+    if longSignal_final
+        adviceText := "✅ 롱 진입 신호!\n목표: $" + str.tostring(close * (1 + tpPct1/100), "#.#")
+        adviceColor := color.green
+    else if shortSignal_final and tradeMode == "선물"
+        adviceText := "✅ 숏 진입 신호!\n목표: $" + str.tostring(close * (1 - tpPct1/100), "#.#")
+        adviceColor := color.red
+    else if isDanger
+        adviceText := "❌ 위험! 기다리세요\n고래와 추세가 반대"
+        adviceColor := color.orange
+    else if noTrend
+        adviceText := "⏸️ 방향 없음\n횡보장 - 기다리세요"
+        adviceColor := color.gray
+    else if overallBullish and totalScore < minSignalStrength
+        adviceText := "🔸 조금 더 기다려요\n점수 부족 (" + str.tostring(totalScore, "#") + "/" + str.tostring(minSignalStrength, "#") + ")"
+        adviceColor := color.orange
+    else if overallBearish and totalScoreShort < minSignalStrength
+        adviceText := "🔸 조금 더 기다려요\n점수 부족"
+        adviceColor := color.orange
+    else
+        adviceText := "⏸️ 관망하세요\n좋은 기회 기다리는 중"
+        adviceColor := color.gray
+    table.cell(beginnerTable, 0, 8, adviceText, text_color=adviceColor, text_size=size.small)
+
+    // 6. 손절/익절 가이드
+    table.cell(beginnerTable, 0, 9, "💰 목표가/손절가", text_color=color.black, text_size=size.small,
+              bgcolor=color.new(color.gray, 80))
+    string tpslGuide = "1차 익절: +" + str.tostring(tpPct1, "#.#") + "%\n2차 익절: +" + str.tostring(tpPct2, "#.#") + "%\n손절: -" + str.tostring(slPct, "#.#") + "%"
+    table.cell(beginnerTable, 0, 10, tpslGuide, text_color=color.black, text_size=size.small)
+
+    // 7. 현재 점수
+    string scoreText = "📊 신호 점수: " + str.tostring(totalScore, "#") + "/28"
+    color scoreColor = totalScore >= minSignalStrength ? color.green : totalScore >= minSignalStrength - 2 ? color.orange : color.gray
+    table.cell(beginnerTable, 0, 11, scoreText, text_color=scoreColor, text_size=size.small,
+              bgcolor=color.new(scoreColor, 80))
+
+// ============================================
+// 정보 테이블 (전문가용)
+// ============================================
+
+var table infoTable = table.new(getTablePosition(detailTablePos), 2, 25, bgcolor=color.new(color.white, 10), border_width=1)
+
+if barstate.islast and showDetailTable
+    table.clear(infoTable, 0, 0, 1, 24)
 
     // 모드 표시
     modeColor = tradeMode == "선물" ? color.purple : tradeMode == "현물코인" ? color.orange : color.blue
     table.cell(infoTable, 0, 0, modeEmoji + " " + modeText, text_color=color.white, text_size=size.normal,
               bgcolor=color.new(modeColor, 20))
-    table.cell(infoTable, 1, 0, "클로드25", text_color=color.white, text_size=size.normal,
+    table.cell(infoTable, 1, 0, "클로드27", text_color=color.white, text_size=size.normal,
               bgcolor=color.new(modeColor, 20))
 
     table.cell(infoTable, 0, 1, "현재가", text_color=color.black, text_size=size.small)
@@ -689,165 +798,218 @@ if barstate.islast
     table.cell(infoTable, 1, 2, str.tostring(tpPct1, "#.#") + "/" + str.tostring(tpPct2, "#.#") + "/" + str.tostring(slPct, "#.#") + "%",
               text_color=color.black, text_size=size.small)
 
-    // 점수
-    table.cell(infoTable, 0, 3, "📊 총점", text_color=color.white, text_size=size.small,
-              bgcolor=color.new(color.gray, 30))
-    table.cell(infoTable, 1, 3, str.tostring(totalScore, "#.#") + "/28",
-              text_color=totalScore >= minSignalStrength ? color.green : color.gray, text_size=size.small)
+    // ═══════════════════════════════════════
+    // 📊 추세 분석 섹션
+    // ═══════════════════════════════════════
+    table.cell(infoTable, 0, 3, "━━ 추세 분석 ━━", text_color=color.white, text_size=size.small,
+              bgcolor=color.new(color.blue, 30))
+    table.cell(infoTable, 1, 3, "", bgcolor=color.new(color.blue, 30))
 
-    // 불장단타왕
-    table.cell(infoTable, 0, 4, "불장단타왕", text_color=color.black, text_size=size.small)
-    table.cell(infoTable, 1, 4, str.tostring(bulJangScore, "#") + "/10",
-              text_color=bulJangScore >= 5 ? color.green : color.gray, text_size=size.small)
-
-    // 클로드
-    table.cell(infoTable, 0, 5, "클로드21", text_color=color.black, text_size=size.small)
-    table.cell(infoTable, 1, 5, str.tostring(claude21Score, "#") + "/8",
-              text_color=claude21Score >= 5 ? color.green : color.gray, text_size=size.small)
-
-    // 필터
-    table.cell(infoTable, 0, 6, "필터", text_color=color.black, text_size=size.small)
-    table.cell(infoTable, 1, 6, str.tostring(filterScore, "#") + "/6",
-              text_color=filterScore >= 4 ? color.green : color.gray, text_size=size.small)
-
-    // 고래 점수
-    table.cell(infoTable, 0, 7, "🐋 고래", text_color=color.black, text_size=size.small)
-    table.cell(infoTable, 1, 7, str.tostring(whaleScore, "#") + "/4",
-              text_color=whaleScore >= 2 ? color.green : color.gray, text_size=size.small)
+    // 종합 추세 판단
+    bool overallBullish = bullishDI and (trend_15m_bullish or trend_5m_bullish) and close > ma50
+    bool overallBearish = bearishDI and (trend_15m_bearish or trend_5m_bearish) and close < ma50
+    string trendSummary = overallBullish ? "🟢 상승추세" : overallBearish ? "🔴 하락추세" : "⚪ 횡보/불명확"
+    color trendSummaryColor = overallBullish ? color.green : overallBearish ? color.red : color.gray
+    table.cell(infoTable, 0, 4, "📈 종합추세", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 4, trendSummary, text_color=trendSummaryColor, text_size=size.small)
 
     // ADX (추세 강도)
-    table.cell(infoTable, 0, 8, "📊 ADX", text_color=color.black, text_size=size.small)
-    adxStatus = veryStrongTrend ? "🔥 매우강함" : strongTrend ? "💪 강함" : trendExists ? "✅ 추세" : "⚠️ 횡보"
+    table.cell(infoTable, 0, 5, "📊 추세강도", text_color=color.black, text_size=size.small)
+    adxStatus = veryStrongTrend ? "🔥 매우강함" : strongTrend ? "💪 강함" : trendExists ? "✅ 추세있음" : "⚠️ 횡보장"
     adxColor = veryStrongTrend ? color.green : strongTrend ? color.blue : trendExists ? color.teal : color.red
-    table.cell(infoTable, 1, 8, adxStatus + " (" + str.tostring(adx, "#.#") + ")",
+    table.cell(infoTable, 1, 5, adxStatus + " (ADX:" + str.tostring(adx, "#.#") + ")",
               text_color=adxColor, text_size=size.small)
 
-    // DI 방향
-    table.cell(infoTable, 0, 9, "DI 방향", text_color=color.black, text_size=size.small)
-    diStatus = bullishDI ? "🟢 상승" : "🔴 하락"
-    table.cell(infoTable, 1, 9, diStatus + " (+" + str.tostring(diPlus, "#.#") + "/-" + str.tostring(diMinus, "#.#") + ")",
-              text_color=bullishDI ? color.green : color.red, text_size=size.small)
+    // DI 방향 (추세 방향)
+    table.cell(infoTable, 0, 6, "📍 추세방향", text_color=color.black, text_size=size.small)
+    float diDiff = diPlus - diMinus
+    string diTrendStr = bullishDI ? "🟢 상승 (+" + str.tostring(diDiff, "#.#") + ")" : "🔴 하락 (" + str.tostring(diDiff, "#.#") + ")"
+    table.cell(infoTable, 1, 6, diTrendStr, text_color=bullishDI ? color.green : color.red, text_size=size.small)
 
-    // Open Interest (OI)
-    table.cell(infoTable, 0, 10, "📈 OI", text_color=color.black, text_size=size.small)
-    oiStatus = oiPriceUp ? "🚀 강한상승" : oiPriceDown ? "📉 강한하락" : oiShortSqueeze ? "🔥 숏청산" : oiLongSqueeze ? "💥 롱청산" : oiIncreasing ? "⬆️ 증가" : oiDecreasing ? "⬇️ 감소" : "➡️ 안정"
-    oiColor = oiPriceUp or oiShortSqueeze ? color.green : oiPriceDown or oiLongSqueeze ? color.red : color.gray
-    table.cell(infoTable, 1, 10, oiStatus + " (" + str.tostring(oiChange, "#.##") + "%)",
-              text_color=oiColor, text_size=size.small)
+    // 상위 타임프레임
+    string tfHighLabel = tradeMode == "선물" ? "HTF(1H)" : "HTF(일봉)"
+    table.cell(infoTable, 0, 7, tfHighLabel, text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 7, trend_15m_bullish ? "🟢 상승" : trend_15m_bearish ? "🔴 하락" : "⚪ 중립",
+              text_color=trend_15m_bullish ? color.green : trend_15m_bearish ? color.red : color.gray, text_size=size.small)
 
-    // Funding Rate (펀딩비)
-    table.cell(infoTable, 0, 11, "💰 펀딩비", text_color=color.black, text_size=size.small)
-    fundingStatus = fundingBearish ? "🔴 롱과열" : fundingBullish ? "🟢 숏과열" : "⚪ 중립"
-    fundingColor = fundingBearish ? color.red : fundingBullish ? color.green : color.gray
-    table.cell(infoTable, 1, 11, fundingStatus + " (" + str.tostring(fundingRate * 100, "#.###") + "%)",
-              text_color=fundingColor, text_size=size.small)
+    // 중간 타임프레임
+    string tfMidLabel = tradeMode == "선물" ? "MTF(15M)" : "MTF(4H)"
+    table.cell(infoTable, 0, 8, tfMidLabel, text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 8, trend_5m_bullish ? "🟢 상승" : trend_5m_bearish ? "🔴 하락" : "⚪ 중립",
+              text_color=trend_5m_bullish ? color.green : trend_5m_bearish ? color.red : color.gray, text_size=size.small)
+
+    // ═══════════════════════════════════════
+    // 🐋 고래 분석 섹션
+    // ═══════════════════════════════════════
+    table.cell(infoTable, 0, 9, "━━ 고래 분석 ━━", text_color=color.white, text_size=size.small,
+              bgcolor=color.new(color.purple, 30))
+    table.cell(infoTable, 1, 9, "", bgcolor=color.new(color.purple, 30))
+
+    // 고래 등급
+    table.cell(infoTable, 0, 10, "🐋 고래등급", text_color=color.black, text_size=size.small)
+    string whaleGrade = isInstitution ? "🐳 기관급 (" + str.tostring(volumeRatio, "#.#") + "x)" : isWhale ? "🐋 고래 (" + str.tostring(volumeRatio, "#.#") + "x)" : volumeRatio >= 1.5 ? "🐟 중형 (" + str.tostring(volumeRatio, "#.#") + "x)" : "🦐 소형 (" + str.tostring(volumeRatio, "#.#") + "x)"
+    color whaleGradeColor = isInstitution ? color.purple : isWhale ? color.blue : volumeRatio >= 1.5 ? color.teal : color.gray
+    table.cell(infoTable, 1, 10, whaleGrade, text_color=whaleGradeColor, text_size=size.small)
+
+    // 고래 방향
+    table.cell(infoTable, 0, 11, "🎯 고래방향", text_color=color.black, text_size=size.small)
+    string whaleDirection = institutionBuying ? "🟢🐳 기관매수!" : institutionSelling ? "🔴🐳 기관매도!" : whaleBuying ? "🟢🐋 고래매수" : whaleSelling ? "🔴🐋 고래매도" : buyPressure > 60 ? "🟢 매수우위" : sellPressure > 60 ? "🔴 매도우위" : "⚪ 중립"
+    color whaleDirectionColor = (institutionBuying or whaleBuying or buyPressure > 60) ? color.green : (institutionSelling or whaleSelling or sellPressure > 60) ? color.red : color.gray
+    table.cell(infoTable, 1, 11, whaleDirection, text_color=whaleDirectionColor, text_size=size.small)
+
+    // 매수/매도 압력 바
+    table.cell(infoTable, 0, 12, "💪 매수압력", text_color=color.black, text_size=size.small)
+    string pressureBar = buyPressure >= 80 ? "████████░░" : buyPressure >= 70 ? "███████░░░" : buyPressure >= 60 ? "██████░░░░" : buyPressure >= 50 ? "█████░░░░░" : buyPressure >= 40 ? "████░░░░░░" : buyPressure >= 30 ? "███░░░░░░░" : "██░░░░░░░░"
+    string pressureText = str.tostring(buyPressure, "#") + "% " + pressureBar
+    table.cell(infoTable, 1, 12, pressureText, text_color=buyPressure > 60 ? color.green : buyPressure < 40 ? color.red : color.gray, text_size=size.small)
+
+    // 시장 국면
+    table.cell(infoTable, 0, 13, "📊 시장국면", text_color=color.black, text_size=size.small)
+    phaseText = isAccumulation ? "📈 세력 누적중" : isDistribution ? "📉 세력 분산중" : "➡️ 관망"
+    table.cell(infoTable, 1, 13, phaseText,
+              text_color=isAccumulation ? color.green : isDistribution ? color.red : color.gray, text_size=size.small)
+
+    // ═══════════════════════════════════════
+    // 📊 점수 섹션
+    // ═══════════════════════════════════════
+    table.cell(infoTable, 0, 14, "━━ 점수 ━━", text_color=color.white, text_size=size.small,
+              bgcolor=color.new(color.gray, 30))
+    table.cell(infoTable, 1, 14, str.tostring(totalScore, "#.#") + "/28", text_color=totalScore >= minSignalStrength ? color.green : color.gray,
+              bgcolor=color.new(color.gray, 30))
+
+    // 불장단타왕
+    table.cell(infoTable, 0, 15, "불장단타왕", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 15, str.tostring(bulJangScore, "#") + "/10",
+              text_color=bulJangScore >= 6 ? color.green : bulJangScore >= 4 ? color.orange : color.red, text_size=size.small)
+
+    // 클로드
+    table.cell(infoTable, 0, 16, "클로드21", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 16, str.tostring(claude21Score, "#") + "/8",
+              text_color=claude21Score >= 6 ? color.green : claude21Score >= 4 ? color.orange : color.red, text_size=size.small)
+
+    // 필터 + 고래
+    table.cell(infoTable, 0, 17, "필터+고래", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 17, str.tostring(filterScore, "#") + "+" + str.tostring(whaleScore, "#") + "/10",
+              text_color=(filterScore + whaleScore) >= 6 ? color.green : color.gray, text_size=size.small)
+
+    // ═══════════════════════════════════════
+    // 📈 지표 상태 섹션
+    // ═══════════════════════════════════════
+    table.cell(infoTable, 0, 18, "━━ 지표 ━━", text_color=color.white, text_size=size.small,
+              bgcolor=color.new(color.teal, 30))
+    table.cell(infoTable, 1, 18, "", bgcolor=color.new(color.teal, 30))
 
     // StochRSI
-    table.cell(infoTable, 0, 12, "StochRSI", text_color=color.black, text_size=size.small)
-    stochStatus = stochOversold ? "🟢 과매도" : stochOverbought ? "🔴 과매수" : "⚪ 중립"
-    table.cell(infoTable, 1, 12, stochStatus + " (" + str.tostring(stochK, "#.#") + ")",
+    table.cell(infoTable, 0, 19, "StochRSI", text_color=color.black, text_size=size.small)
+    stochStatus = stochOversold ? "🟢 과매도 (매수)" : stochOverbought ? "🔴 과매수 (매도)" : stochK > 50 ? "⬆️ 상승중" : "⬇️ 하락중"
+    table.cell(infoTable, 1, 19, stochStatus + " (" + str.tostring(stochK, "#") + ")",
               text_color=stochOversold ? color.green : stochOverbought ? color.red : color.gray, text_size=size.small)
 
     // BB
-    table.cell(infoTable, 0, 13, "BB 상태", text_color=color.black, text_size=size.small)
-    bbStatus = bbSqueeze ? "🟡 스퀴즈" : touchingBBLower ? "🟢 하단" : touchingBBUpper ? "🔴 상단" : "⚪ 중립"
-    table.cell(infoTable, 1, 13, bbStatus,
+    table.cell(infoTable, 0, 20, "볼린저밴드", text_color=color.black, text_size=size.small)
+    bbStatus = bbSqueeze ? "🟡 스퀴즈 (폭발예고)" : touchingBBLower ? "🟢 하단 (반등)" : touchingBBUpper ? "🔴 상단 (조정)" : "⚪ 중립"
+    table.cell(infoTable, 1, 20, bbStatus,
               text_color=bbSqueeze ? color.yellow : touchingBBLower ? color.green : touchingBBUpper ? color.red : color.gray,
               text_size=size.small)
 
-    // 거래량 비율
-    table.cell(infoTable, 0, 14, "거래량 비율", text_color=color.black, text_size=size.small)
-    volColor = isInstitution ? color.purple : isWhale ? color.blue : color.gray
-    volText = isInstitution ? "🐳 기관 " : isWhale ? "🐋 고래 " : ""
-    table.cell(infoTable, 1, 14, volText + str.tostring(volumeRatio, "#.##") + "x",
-              text_color=volColor, text_size=size.small)
+    // OI 상태
+    table.cell(infoTable, 0, 21, "📈 OI", text_color=color.black, text_size=size.small)
+    oiStatus = oiPriceUp ? "🚀 강한상승" : oiPriceDown ? "📉 강한하락" : oiShortSqueeze ? "🔥 숏스퀴즈" : oiLongSqueeze ? "💥 롱스퀴즈" : oiIncreasing ? "⬆️ 증가" : oiDecreasing ? "⬇️ 감소" : "➡️ 안정"
+    oiColor = oiPriceUp or oiShortSqueeze ? color.green : oiPriceDown or oiLongSqueeze ? color.red : color.gray
+    table.cell(infoTable, 1, 21, oiStatus, text_color=oiColor, text_size=size.small)
 
-    // 매수/매도 압력
-    table.cell(infoTable, 0, 15, "매수 압력", text_color=color.black, text_size=size.small)
-    table.cell(infoTable, 1, 15, str.tostring(buyPressure, "#.#") + "%",
-              text_color=buyPressure > 60 ? color.green : buyPressure < 40 ? color.red : color.gray, text_size=size.small)
+    // Funding Rate
+    table.cell(infoTable, 0, 22, "💰 펀딩비", text_color=color.black, text_size=size.small)
+    fundingStatus = fundingBearish ? "🔴 롱과열 (숏유리)" : fundingBullish ? "🟢 숏과열 (롱유리)" : "⚪ 중립"
+    fundingColor = fundingBearish ? color.red : fundingBullish ? color.green : color.gray
+    table.cell(infoTable, 1, 22, fundingStatus, text_color=fundingColor, text_size=size.small)
 
-    // 시장 국면
-    table.cell(infoTable, 0, 16, "시장 국면", text_color=color.black, text_size=size.small)
-    phaseText = isAccumulation ? "📈 누적" : isDistribution ? "📉 분산" : "➡️ 중립"
-    table.cell(infoTable, 1, 16, phaseText,
-              text_color=isAccumulation ? color.green : isDistribution ? color.red : color.gray, text_size=size.small)
+    // ═══════════════════════════════════════
+    // 🎯 최종 신호
+    // ═══════════════════════════════════════
+    table.cell(infoTable, 0, 23, "━━━━━━━━━━", text_color=color.gray, text_size=size.small)
+    table.cell(infoTable, 1, 23, "━━━━━━━━━━", text_color=color.gray, text_size=size.small)
 
-    // 상위 타임프레임 트렌드 (선물: 1시간 / 현물,주식: 일봉)
-    string tfHighLabel = tradeMode == "선물" ? "1시간" : "일봉"
-    table.cell(infoTable, 0, 17, tfHighLabel, text_color=color.black, text_size=size.small)
-    table.cell(infoTable, 1, 17, trend_15m_bullish ? "🟢 BULL" : trend_15m_bearish ? "🔴 BEAR" : "⚪ FLAT",
-              text_color=trend_15m_bullish ? color.green : trend_15m_bearish ? color.red : color.gray, text_size=size.small)
-
-    // 중간 타임프레임 트렌드 (선물: 15분 / 현물,주식: 4시간)
-    string tfMidLabel = tradeMode == "선물" ? "15분봉" : "4시간"
-    table.cell(infoTable, 0, 18, tfMidLabel, text_color=color.black, text_size=size.small)
-    table.cell(infoTable, 1, 18, trend_5m_bullish ? "🟢 BULL" : trend_5m_bearish ? "🔴 BEAR" : "⚪ FLAT",
-              text_color=trend_5m_bullish ? color.green : trend_5m_bearish ? color.red : color.gray, text_size=size.small)
-
-    // 최종 신호
-    table.cell(infoTable, 0, 19, "최종 신호", text_color=color.white, text_size=size.small,
-              bgcolor=color.new(color.gray, 30))
-    string finalText = longSignal_final ? "🚀 LONG" : (shortSignal_final and tradeMode == "선물") ? "🔻 SHORT" : whaleExitSignal ? "⚠️ EXIT" : "⏸️ 대기"
+    table.cell(infoTable, 0, 24, "🎯 최종신호", text_color=color.white, text_size=size.small,
+              bgcolor=color.new(color.gray, 20))
+    string finalText = longSignal_final ? "🚀 LONG 진입" : (shortSignal_final and tradeMode == "선물") ? "🔻 SHORT 진입" : whaleExitSignal ? "⚠️ EXIT 경고" : "⏸️ 대기중"
     finalColor = longSignal_final ? color.green : (shortSignal_final and tradeMode == "선물") ? color.red : whaleExitSignal ? color.orange : color.gray
-    table.cell(infoTable, 1, 19, finalText, text_color=finalColor, text_size=size.small)
+    table.cell(infoTable, 1, 24, finalText, text_color=finalColor, text_size=size.small,
+              bgcolor=color.new(finalColor, 80))
 
 // ============================================
-// Webhook 알림
+// Webhook 알림 (깔끔한 형식 + JSON 웹훅)
 // ============================================
 
 if longSignal_final
-    string jsonData = '{"version":"25",' +
-          '"market":"' + syminfo.ticker + '",' +
-          '"mode":"' + tradeMode + '",' +
-          '"signal":"LONG",' +
+    // 가격 계산
+    float tp1Price = close * (1 + tpPct1/100)
+    float tp2Price = close * (1 + tpPct2/100)
+    float slPrice = close * (1 - slPct/100)
+
+    // 깔끔한 알림 메시지 (이메일/앱 알림용)
+    string alertMsg = "🟢 LONG " + syminfo.basecurrency + "-USDT\n" +
+          "━━━━━━━━━━━━━━━\n" +
+          "진입: $" + str.tostring(close, "#.##") + "\n" +
+          "TP1: $" + str.tostring(tp1Price, "#.##") + " (+" + str.tostring(tpPct1, "#.#") + "%)\n" +
+          "TP2: $" + str.tostring(tp2Price, "#.##") + " (+" + str.tostring(tpPct2, "#.#") + "%)\n" +
+          "SL: $" + str.tostring(slPrice, "#.##") + " (-" + str.tostring(slPct, "#.#") + "%)\n" +
+          "━━━━━━━━━━━━━━━\n" +
+          "레버리지: " + str.tostring(leverageInput) + "x | 점수: " + str.tostring(totalScore, "#.#") + "/28\n" +
+          (isInstitution ? "🐳 기관 감지!" : isWhale ? "🐋 고래 감지!" : "") +
+          "\n\n" +
+          '{"version":"27","market":"' + syminfo.basecurrency + '-USDT","mode":"' + tradeMode + '","signal":"LONG",' +
+          '"leverage":"' + str.tostring(leverageInput) + '",' +
           '"entry":"' + str.tostring(close, "#.##") + '",' +
           '"totalScore":"' + str.tostring(totalScore, "#.#") + '",' +
-          '"tp1":"' + str.tostring(close * (1 + tpPct1/100), "#.##") + '",' +
-          '"tp2":"' + str.tostring(close * (1 + tpPct2/100), "#.##") + '",' +
-          '"sl":"' + str.tostring(close * (1 - slPct/100), "#.##") + '",' +
+          '"tp1":"' + str.tostring(tp1Price, "#.##") + '",' +
+          '"tp2":"' + str.tostring(tp2Price, "#.##") + '",' +
+          '"sl":"' + str.tostring(slPrice, "#.##") + '",' +
           '"tp1_pct":"' + str.tostring(tpPct1, "#.#") + '",' +
           '"tp2_pct":"' + str.tostring(tpPct2, "#.#") + '",' +
-          '"sl_pct":"' + str.tostring(slPct, "#.#") + '",' +
-          '"volume_ratio":"' + str.tostring(volumeRatio, "#.##") + '",' +
-          '"smart_money":"' + (isInstitution ? "INSTITUTION" : isWhale ? "WHALE" : "NONE") + '",' +
-          '"buy_pressure":"' + str.tostring(buyPressure, "#.#") + '",' +
-          '"market_phase":"' + (isAccumulation ? "ACCUMULATION" : isDistribution ? "DISTRIBUTION" : "NEUTRAL") + '",' +
-          '"stochRSI_k":"' + str.tostring(stochK, "#.#") + '",' +
-          '"bb_squeeze":"' + (bbSqueeze ? "true" : "false") + '"}'
+          '"sl_pct":"' + str.tostring(slPct, "#.#") + '"}'
 
-    alert(jsonData, freq=alert.freq_once_per_bar)
+    alert(alertMsg, freq=alert.freq_once_per_bar)
 
 if shortSignal_final and tradeMode == "선물"
-    string jsonData = '{"version":"25",' +
-          '"market":"' + syminfo.ticker + '",' +
-          '"mode":"선물",' +
-          '"signal":"SHORT",' +
+    // 가격 계산
+    float tp1Price = close * (1 - tpPct1/100)
+    float tp2Price = close * (1 - tpPct2/100)
+    float slPrice = close * (1 + slPct/100)
+
+    // 깔끔한 알림 메시지 (이메일/앱 알림용)
+    string alertMsg = "🔴 SHORT " + syminfo.basecurrency + "-USDT\n" +
+          "━━━━━━━━━━━━━━━\n" +
+          "진입: $" + str.tostring(close, "#.##") + "\n" +
+          "TP1: $" + str.tostring(tp1Price, "#.##") + " (-" + str.tostring(tpPct1, "#.#") + "%)\n" +
+          "TP2: $" + str.tostring(tp2Price, "#.##") + " (-" + str.tostring(tpPct2, "#.#") + "%)\n" +
+          "SL: $" + str.tostring(slPrice, "#.##") + " (+" + str.tostring(slPct, "#.#") + "%)\n" +
+          "━━━━━━━━━━━━━━━\n" +
+          "레버리지: " + str.tostring(leverageInput) + "x | 점수: " + str.tostring(totalScoreShort, "#.#") + "/28\n" +
+          (institutionSelling ? "🐳 기관 매도!" : whaleSelling ? "🐋 고래 매도!" : "") +
+          "\n\n" +
+          '{"version":"27","market":"' + syminfo.basecurrency + '-USDT","mode":"선물","signal":"SHORT",' +
+          '"leverage":"' + str.tostring(leverageInput) + '",' +
           '"entry":"' + str.tostring(close, "#.##") + '",' +
           '"totalScore":"' + str.tostring(totalScoreShort, "#.#") + '",' +
-          '"tp1":"' + str.tostring(close * (1 - tpPct1/100), "#.##") + '",' +
-          '"tp2":"' + str.tostring(close * (1 - tpPct2/100), "#.##") + '",' +
-          '"sl":"' + str.tostring(close * (1 + slPct/100), "#.##") + '",' +
+          '"tp1":"' + str.tostring(tp1Price, "#.##") + '",' +
+          '"tp2":"' + str.tostring(tp2Price, "#.##") + '",' +
+          '"sl":"' + str.tostring(slPrice, "#.##") + '",' +
           '"tp1_pct":"' + str.tostring(tpPct1, "#.#") + '",' +
           '"tp2_pct":"' + str.tostring(tpPct2, "#.#") + '",' +
-          '"sl_pct":"' + str.tostring(slPct, "#.#") + '",' +
-          '"volume_ratio":"' + str.tostring(volumeRatio, "#.##") + '",' +
-          '"smart_money":"' + (institutionSelling ? "INSTITUTION" : whaleSelling ? "WHALE" : "NONE") + '",' +
-          '"sell_pressure":"' + str.tostring(sellPressure, "#.#") + '",' +
-          '"market_phase":"' + (isDistribution ? "DISTRIBUTION" : "NEUTRAL") + '",' +
-          '"stochRSI_k":"' + str.tostring(stochK, "#.#") + '",' +
-          '"bb_squeeze":"' + (bbSqueeze ? "true" : "false") + '"}'
+          '"sl_pct":"' + str.tostring(slPct, "#.#") + '"}'
 
-    alert(jsonData, freq=alert.freq_once_per_bar)
+    alert(alertMsg, freq=alert.freq_once_per_bar)
 
 if whaleExitSignal
-    string jsonData = '{"version":"25",' +
-          '"market":"' + syminfo.ticker + '",' +
-          '"mode":"' + tradeMode + '",' +
-          '"signal":"EXIT",' +
-          '"reason":"WHALE_SELLING",' +
-          '"current_price":"' + str.tostring(close, "#.##") + '",' +
-          '"volume_ratio":"' + str.tostring(volumeRatio, "#.##") + '",' +
-          '"sell_pressure":"' + str.tostring(sellPressure, "#.#") + '"}'
+    string alertMsg = "⚠️ EXIT 경고 " + syminfo.basecurrency + "-USDT\n" +
+          "━━━━━━━━━━━━━━━\n" +
+          "현재가: $" + str.tostring(close, "#.##") + "\n" +
+          "사유: 고래 매도 감지\n" +
+          "거래량: " + str.tostring(volumeRatio, "#.##") + "배\n" +
+          "매도압력: " + str.tostring(sellPressure, "#.#") + "%" +
+          "\n\n" +
+          '{"version":"27","market":"' + syminfo.basecurrency + '-USDT","mode":"' + tradeMode + '","signal":"EXIT",' +
+          '"reason":"WHALE_SELLING","current_price":"' + str.tostring(close, "#.##") + '"}'
 
-    alert(jsonData, freq=alert.freq_once_per_bar)
+    alert(alertMsg, freq=alert.freq_once_per_bar)

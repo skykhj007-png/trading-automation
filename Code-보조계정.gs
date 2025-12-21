@@ -143,14 +143,14 @@ var CONFIG = {
 // Bitget API 설정
 // ============================================
 var BITGET_CONFIG = {
-  API_KEY: 'bg_04dc69700de7130fc590be399eb96367',
-  SECRET_KEY: '5c9b0485e696ca643f84b934d0b199bbb132f78893eacb8a467a620cb8b6a340',
+  API_KEY: 'bg_e3799f8c2c2599651938eb78caeaa3d4',
+  SECRET_KEY: '3d09bdfdfa48c93f6a8ed26fdeac72140256de8e975d4993efaa4961f921e400',
   PASSPHRASE: 'ajdcjddl12',
   BASE_URL: 'https://api.bitget.com'
 };
 
 var SHEET_CONFIG = {
-  SPREADSHEET_ID: '1dlntPV_LY_1RrCCpmkW3zw5dpcA_dMhVDkjd90QcI7E',
+  SPREADSHEET_ID: '1L6wn9fSLa-sThsYLViSOmbh6Em7jbnXXvfvCcvFMH80',
   SIGNAL_SHEET: '신호기록',
   TRADE_SHEET: 'V25 자동매매일지',
   STATS_SHEET: '통계'
@@ -164,7 +164,7 @@ var MODE_SETTINGS = {
 };
 
 var VIRTUAL_TRADING = {
-  STARTING_BALANCE: 2750.63,  // 메인계정 시작 자본
+  STARTING_BALANCE: 100,  // 보조계정 시작 자본 (통계 시트 B10에서 자동으로 가져옴)
   POSITION_SIZE: 100
 };
 
