@@ -1058,9 +1058,13 @@ function logTradeResult(position, exitType, exitPrice, profitPercent) {
     isWin = false; // 본절은 패 처리 안함
   }
 
+  // 마켓 정보 (position에서 가져옴)
+  var market = position.market || 'BTC-USDT';
+
   var row = [
     Utilities.formatDate(now, 'Asia/Seoul', 'yyyy-MM-dd'),
     Utilities.formatDate(now, 'Asia/Seoul', 'HH:mm:ss'),
+    market,  // 마켓 열 추가
     position.signal,
     '$' + position.entryPrice.toFixed(2),
     '$' + exitPrice.toFixed(2),
@@ -1078,21 +1082,21 @@ function logTradeResult(position, exitType, exitPrice, profitPercent) {
   sheet.getRange(lastRow, 1, 1, row.length).setBackground(bgColor);
 
   if (profitPercent > 0) {
-    sheet.getRange(lastRow, 7).setFontColor('#2E7D32').setFontWeight('bold');
-    sheet.getRange(lastRow, 8).setFontColor('#2E7D32').setFontWeight('bold');
+    sheet.getRange(lastRow, 8).setFontColor('#2E7D32').setFontWeight('bold');  // 수익률
+    sheet.getRange(lastRow, 9).setFontColor('#2E7D32').setFontWeight('bold');  // 손익
   } else if (profitPercent < 0) {
-    sheet.getRange(lastRow, 7).setFontColor('#C62828').setFontWeight('bold');
     sheet.getRange(lastRow, 8).setFontColor('#C62828').setFontWeight('bold');
+    sheet.getRange(lastRow, 9).setFontColor('#C62828').setFontWeight('bold');
   }
 
   // 누적수익률 색상
   if (totalReturnPercent > 0) {
-    sheet.getRange(lastRow, 10).setFontColor('#2E7D32').setFontWeight('bold');
+    sheet.getRange(lastRow, 11).setFontColor('#2E7D32').setFontWeight('bold');  // 누적수익률
   } else if (totalReturnPercent < 0) {
-    sheet.getRange(lastRow, 10).setFontColor('#C62828').setFontWeight('bold');
+    sheet.getRange(lastRow, 11).setFontColor('#C62828').setFontWeight('bold');
   }
 
-  sheet.getRange(lastRow, 9).setFontWeight('bold').setBackground('#E3F2FD');
+  sheet.getRange(lastRow, 10).setFontWeight('bold').setBackground('#E3F2FD');  // 잔고($) 열
 
   // 통계 업데이트
   updateStatistics(sheet, newBalance, totalReturnPercent, isWin, exitType);
@@ -1439,9 +1443,9 @@ function createTradeSheet(ss) {
 
   sheet.getRange(2, 1, 2, 11).setBackground('#E3F2FD');
 
-  // 헤더
+  // 헤더 (마켓 열 추가)
   var headers = [
-    '날짜', '시간', '신호', '진입가', '청산가',
+    '날짜', '시간', '마켓', '신호', '진입가', '청산가',
     '청산유형', '수익률', '손익($)', '잔고($)', '누적수익률', '메모'
   ];
 
@@ -1452,26 +1456,27 @@ function createTradeSheet(ss) {
     .setFontWeight('bold')
     .setHorizontalAlignment('center');
 
-  sheet.setColumnWidth(1, 100);
-  sheet.setColumnWidth(2, 80);
-  sheet.setColumnWidth(3, 70);
-  sheet.setColumnWidth(4, 100);
-  sheet.setColumnWidth(5, 100);
-  sheet.setColumnWidth(6, 120);
-  sheet.setColumnWidth(7, 80);
-  sheet.setColumnWidth(8, 80);
-  sheet.setColumnWidth(9, 100);
-  sheet.setColumnWidth(10, 100);
-  sheet.setColumnWidth(11, 150);
+  sheet.setColumnWidth(1, 100);  // 날짜
+  sheet.setColumnWidth(2, 80);   // 시간
+  sheet.setColumnWidth(3, 90);   // 마켓
+  sheet.setColumnWidth(4, 70);   // 신호
+  sheet.setColumnWidth(5, 100);  // 진입가
+  sheet.setColumnWidth(6, 100);  // 청산가
+  sheet.setColumnWidth(7, 120);  // 청산유형
+  sheet.setColumnWidth(8, 80);   // 수익률
+  sheet.setColumnWidth(9, 90);   // 손익($)
+  sheet.setColumnWidth(10, 100); // 잔고($)
+  sheet.setColumnWidth(11, 100); // 누적수익률
+  sheet.setColumnWidth(12, 150); // 메모
 
   sheet.setFrozenRows(4);
 
   // 초기 잔고 행
   sheet.appendRow([
-    '시작', '-', '-', '-', '-', '[초기잔고]', '-', '-',
-    VIRTUAL_TRADING.STARTING_BALANCE.toFixed(2), '0.00%', '시뮬레이션 시작'
+    '시작', '-', '-', '-', '-', '-', '[초기잔고]', '-', '-',
+    '$' + VIRTUAL_TRADING.STARTING_BALANCE.toFixed(2), '0.00%', '시뮬레이션 시작'
   ]);
-  sheet.getRange(5, 9).setFontWeight('bold').setBackground('#E3F2FD');
+  sheet.getRange(5, 10).setFontWeight('bold').setBackground('#E3F2FD');  // 잔고($) 열
 
   return sheet;
 }
@@ -3598,11 +3603,13 @@ function syncBitgetPositions() {
  */
 function checkClosedPositions(bitgetPositions) {
   // 트리거에서 직접 호출 시 Bitget에서 포지션 가져오기
-  if (!bitgetPositions) {
+  if (!bitgetPositions || !Array.isArray(bitgetPositions)) {
     bitgetPositions = getBitgetPositions();
-    if (!bitgetPositions) {
-      bitgetPositions = [];
-    }
+  }
+
+  // 배열이 아니면 빈 배열로 설정
+  if (!Array.isArray(bitgetPositions)) {
+    bitgetPositions = [];
   }
 
   var props = PropertiesService.getScriptProperties();
@@ -4060,4 +4067,295 @@ function testTelegramNotification() {
 
   sendTelegramMessage(chatId, '🤖 <b>테스트 알림</b>\n\n클로드27 트레이딩 봇이 정상 작동중입니다!\n\n/도움 을 입력해보세요.');
   Logger.log('✅ 테스트 메시지 전송됨');
+}
+
+// ============================================
+// 🔍 보조계정 자동매매 문제 진단
+// ============================================
+
+/**
+ * 🔍 보조계정 자동매매 전체 진단
+ *
+ * 트레이딩뷰 알람이 가는데 자동매매가 안 될 때 실행하세요!
+ *
+ * 체크 항목:
+ * 1. 스프레드시트 연결
+ * 2. Bitget API 연결
+ * 3. 트리거 설정 상태
+ * 4. 웹훅 URL 확인
+ * 5. 최근 신호 수신 여부
+ */
+function 보조계정_자동매매_진단() {
+  Logger.log('');
+  Logger.log('╔════════════════════════════════════════╗');
+  Logger.log('║  🔍 보조계정 자동매매 시스템 진단      ║');
+  Logger.log('╚════════════════════════════════════════╝');
+  Logger.log('');
+
+  var allOk = true;
+  var issues = [];
+
+  // ==========================================
+  // 1. 스프레드시트 연결 체크
+  // ==========================================
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  Logger.log('1️⃣  스프레드시트 연결 테스트');
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  try {
+    var ss = SpreadsheetApp.openById(SHEET_CONFIG.SPREADSHEET_ID);
+    var sheetName = ss.getName();
+    var sheetUrl = ss.getUrl();
+
+    Logger.log('✅ 스프레드시트 연결 성공!');
+    Logger.log('   이름: ' + sheetName);
+    Logger.log('   URL: ' + sheetUrl);
+
+    // 필요한 시트 확인
+    var requiredSheets = [
+      SHEET_CONFIG.SIGNAL_SHEET,
+      SHEET_CONFIG.TRADE_SHEET,
+      SHEET_CONFIG.STATS_SHEET
+    ];
+
+    var missingSheets = [];
+    requiredSheets.forEach(function(sheetName) {
+      var sheet = ss.getSheetByName(sheetName);
+      if (!sheet) {
+        missingSheets.push(sheetName);
+      }
+    });
+
+    if (missingSheets.length > 0) {
+      Logger.log('⚠️  필요한 시트 누락: ' + missingSheets.join(', '));
+      Logger.log('   → 해결: initSimulation() 함수 실행');
+      allOk = false;
+      issues.push('시트 누락 - initSimulation() 실행 필요');
+    } else {
+      Logger.log('✅ 모든 필수 시트 존재');
+    }
+
+  } catch (e) {
+    Logger.log('❌ 스프레드시트 연결 실패!');
+    Logger.log('   오류: ' + e.toString());
+    Logger.log('   → SPREADSHEET_ID 확인: ' + SHEET_CONFIG.SPREADSHEET_ID);
+    allOk = false;
+    issues.push('스프레드시트 연결 실패 - ID 확인 필요');
+  }
+
+  Logger.log('');
+
+  // ==========================================
+  // 2. Bitget API 연결 체크
+  // ==========================================
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  Logger.log('2️⃣  Bitget API 연결 테스트');
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  try {
+    Logger.log('   API Key: ' + BITGET_CONFIG.API_KEY.substring(0, 10) + '...');
+
+    var balance = getBitgetFuturesBalance();
+
+    if (balance !== null && balance !== undefined) {
+      Logger.log('✅ Bitget API 연결 성공!');
+      Logger.log('   선물 잔고: $' + balance.toFixed(2));
+    } else {
+      Logger.log('⚠️  Bitget API 응답 이상');
+      Logger.log('   → API 키/시크릿/패스프레이즈 확인');
+      allOk = false;
+      issues.push('Bitget API 오류 - 키 확인 필요');
+    }
+  } catch (e) {
+    Logger.log('❌ Bitget API 연결 실패!');
+    Logger.log('   오류: ' + e.toString());
+    Logger.log('   → API 키 재확인 필요');
+    allOk = false;
+    issues.push('Bitget API 연결 실패');
+  }
+
+  Logger.log('');
+
+  // ==========================================
+  // 3. 트리거 상태 체크
+  // ==========================================
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  Logger.log('3️⃣  트리거 상태 확인');
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  var triggers = ScriptApp.getProjectTriggers();
+  Logger.log('   총 트리거 수: ' + triggers.length);
+
+  var requiredTriggers = {
+    'syncBitgetPositions': false,
+    'checkClosedPositions': false
+  };
+
+  triggers.forEach(function(trigger) {
+    var funcName = trigger.getHandlerFunction();
+    Logger.log('   - ' + funcName);
+
+    if (requiredTriggers.hasOwnProperty(funcName)) {
+      requiredTriggers[funcName] = true;
+    }
+  });
+
+  var missingTriggers = [];
+  for (var funcName in requiredTriggers) {
+    if (!requiredTriggers[funcName]) {
+      missingTriggers.push(funcName);
+    }
+  }
+
+  if (missingTriggers.length > 0) {
+    Logger.log('❌ 필수 트리거 누락!');
+    Logger.log('   누락: ' + missingTriggers.join(', '));
+    Logger.log('   → 해결: 원클릭_전체설정() 함수 실행');
+    allOk = false;
+    issues.push('트리거 누락 - 원클릭_전체설정() 실행');
+  } else {
+    Logger.log('✅ 필수 트리거 모두 설정됨');
+  }
+
+  Logger.log('');
+
+  // ==========================================
+  // 4. 웹훅 URL 확인
+  // ==========================================
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  Logger.log('4️⃣  웹훅 URL 확인');
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  try {
+    var webAppUrl = ScriptApp.getService().getUrl();
+
+    if (webAppUrl) {
+      Logger.log('✅ 웹 앱 배포 확인됨');
+      Logger.log('   URL: ' + webAppUrl);
+      Logger.log('');
+      Logger.log('   ⚠️  TradingView 알림에 이 URL 설정했는지 확인!');
+    } else {
+      Logger.log('❌ 웹 앱 미배포!');
+      Logger.log('   → 배포 → 새 배포 실행 필요');
+      allOk = false;
+      issues.push('웹 앱 미배포 - 배포 필요');
+    }
+  } catch (e) {
+    Logger.log('⚠️  웹 앱 URL 확인 불가');
+    Logger.log('   오류: ' + e.toString());
+  }
+
+  Logger.log('');
+
+  // ==========================================
+  // 5. 최근 신호 수신 확인
+  // ==========================================
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  Logger.log('5️⃣  최근 신호 수신 확인');
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  try {
+    var ss = SpreadsheetApp.openById(SHEET_CONFIG.SPREADSHEET_ID);
+    var signalSheet = ss.getSheetByName(SHEET_CONFIG.SIGNAL_SHEET);
+
+    if (signalSheet) {
+      var lastRow = signalSheet.getLastRow();
+
+      if (lastRow > 1) {
+        var lastSignal = signalSheet.getRange(lastRow, 1, 1, 8).getValues()[0];
+        var timestamp = lastSignal[0];
+        var market = lastSignal[1];
+        var signal = lastSignal[2];
+
+        Logger.log('✅ 신호 기록 발견');
+        Logger.log('   마지막 신호: ' + timestamp);
+        Logger.log('   마켓: ' + market + ' | 신호: ' + signal);
+
+        // 최근 1시간 이내 신호 확인
+        var now = new Date();
+        var signalTime = new Date(timestamp);
+        var diffMinutes = (now - signalTime) / 1000 / 60;
+
+        if (diffMinutes < 60) {
+          Logger.log('   ✅ 최근 ' + Math.floor(diffMinutes) + '분 전 신호');
+        } else {
+          Logger.log('   ⚠️  마지막 신호가 ' + Math.floor(diffMinutes / 60) + '시간 전');
+          Logger.log('   → 새 신호 대기 중일 수 있음');
+        }
+      } else {
+        Logger.log('⚠️  신호 기록 없음');
+        Logger.log('   → TradingView 알림이 웹훅 URL로 전송되고 있는지 확인');
+        allOk = false;
+        issues.push('신호 수신 없음 - 웹훅 URL 확인');
+      }
+    }
+  } catch (e) {
+    Logger.log('⚠️  신호 기록 확인 실패: ' + e.toString());
+  }
+
+  Logger.log('');
+
+  // ==========================================
+  // 6. 현재 포지션 확인
+  // ==========================================
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  Logger.log('6️⃣  현재 포지션 확인');
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  checkPosition();
+
+  Logger.log('');
+
+  // ==========================================
+  // 최종 결과
+  // ==========================================
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  Logger.log('📋 진단 결과 요약');
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  if (allOk && issues.length === 0) {
+    Logger.log('');
+    Logger.log('🎉 모든 시스템 정상!');
+    Logger.log('');
+    Logger.log('자동매매가 작동하지 않는다면:');
+    Logger.log('1. TradingView 알림에 웹훅 URL 확인');
+    Logger.log('2. TradingView에서 신호 발생했는지 확인');
+    Logger.log('3. Apps Script 실행 로그에서 "Webhook 수신" 메시지 확인');
+  } else {
+    Logger.log('');
+    Logger.log('⚠️  발견된 문제: ' + issues.length + '개');
+    Logger.log('');
+
+    issues.forEach(function(issue, index) {
+      Logger.log((index + 1) + '. ' + issue);
+    });
+
+    Logger.log('');
+    Logger.log('📌 해결 방법:');
+    Logger.log('');
+
+    if (issues.some(function(i) { return i.includes('시트 누락'); })) {
+      Logger.log('▶ initSimulation() 실행');
+    }
+
+    if (issues.some(function(i) { return i.includes('트리거'); })) {
+      Logger.log('▶ 원클릭_전체설정() 실행');
+    }
+
+    if (issues.some(function(i) { return i.includes('Bitget'); })) {
+      Logger.log('▶ BITGET_CONFIG의 API 키/시크릿/패스프레이즈 확인');
+    }
+
+    if (issues.some(function(i) { return i.includes('배포'); })) {
+      Logger.log('▶ 배포 → 새 배포 → 웹 앱 (액세스: 모든 사용자)');
+    }
+
+    if (issues.some(function(i) { return i.includes('신호'); })) {
+      Logger.log('▶ TradingView 알림 편집 → 웹훅 URL 재확인');
+    }
+  }
+
+  Logger.log('');
+  Logger.log('╔════════════════════════════════════════╗');
+  Logger.log('║           진단 완료                    ║');
+  Logger.log('╚════════════════════════════════════════╝');
+  Logger.log('');
 }

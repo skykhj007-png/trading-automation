@@ -22,16 +22,38 @@ manualTP1 = input.float(0.8, title="수동 TP1 (%)", minval=0.1, maxval=10.0, st
 manualTP2 = input.float(1.5, title="수동 TP2 (%)", minval=0.1, maxval=20.0, step=0.1)
 manualSL = input.float(0.3, title="수동 SL (%)", minval=0.05, maxval=5.0, step=0.05)
 
-// 최종 TP/SL 값
-float tpPct1 = useAutoTPSL ? defaultTP1 : manualTP1
-float tpPct2 = useAutoTPSL ? defaultTP2 : manualTP2
-float slPct = useAutoTPSL ? defaultSL : manualSL
+// 기본 TP/SL 값 (레버리지 연동 전)
+float baseTpPct1 = useAutoTPSL ? defaultTP1 : manualTP1
+float baseTpPct2 = useAutoTPSL ? defaultTP2 : manualTP2
+float baseSlPct = useAutoTPSL ? defaultSL : manualSL
 
 // ============================================
 // 레버리지 및 포지션 설정
 // ============================================
-leverageInput = input.int(5, title="레버리지 (선물만)", minval=1, maxval=20)
+leverageInput = input.int(50, title="레버리지 (선물만)", minval=1, maxval=125)
 riskPercentInput = input.float(20.0, title="투입 비율 (%)", minval=1.0, maxval=100.0)
+
+// ============================================
+// 🎯 레버리지 기반 TP/SL 자동 계산
+// 수수료 고려: Bitget 0.06% x 2 = 0.12% + 여유분
+// 목표 실제 수익률: TP1=10%, TP2=20%, SL=-5%
+// ============================================
+// 기준 레버리지 10x 대비 비율로 조정
+float leverageRatio = 10.0 / leverageInput
+
+// 레버리지 연동 TP/SL (선물만 적용)
+// 고배율일수록 가격 변동폭 작게, 저배율일수록 크게
+float leverageTP1 = tradeMode == "선물" ? math.max(0.15, 1.0 * leverageRatio) : baseTpPct1
+float leverageTP2 = tradeMode == "선물" ? math.max(0.30, 2.0 * leverageRatio) : baseTpPct2
+float leverageSL = tradeMode == "선물" ? math.max(0.08, 0.5 * leverageRatio) : baseSlPct
+
+// 레버리지 연동 사용 여부
+useLeverageTPSL = input.bool(true, title="📊 레버리지 연동 TP/SL", tooltip="ON: 레버리지에 따라 TP/SL 자동 조정, OFF: 고정 TP/SL 사용")
+
+// ★ 최종 TP/SL 값 (레버리지 연동 적용) ★
+float tpPct1 = useLeverageTPSL ? leverageTP1 : baseTpPct1
+float tpPct2 = useLeverageTPSL ? leverageTP2 : baseTpPct2
+float slPct = useLeverageTPSL ? leverageSL : baseSlPct
 
 // 신호 강도 설정
 minSignalStrength = input.int(10, title="최소 신호 강도", minval=8, maxval=20)

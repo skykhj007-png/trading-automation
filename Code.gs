@@ -1058,9 +1058,13 @@ function logTradeResult(position, exitType, exitPrice, profitPercent) {
     isWin = false; // 본절은 패 처리 안함
   }
 
+  // 마켓 정보 (position에서 가져옴)
+  var market = position.market || 'BTC-USDT';
+
   var row = [
     Utilities.formatDate(now, 'Asia/Seoul', 'yyyy-MM-dd'),
     Utilities.formatDate(now, 'Asia/Seoul', 'HH:mm:ss'),
+    market,  // 마켓 열 추가
     position.signal,
     '$' + position.entryPrice.toFixed(2),
     '$' + exitPrice.toFixed(2),
@@ -1078,21 +1082,21 @@ function logTradeResult(position, exitType, exitPrice, profitPercent) {
   sheet.getRange(lastRow, 1, 1, row.length).setBackground(bgColor);
 
   if (profitPercent > 0) {
-    sheet.getRange(lastRow, 7).setFontColor('#2E7D32').setFontWeight('bold');
-    sheet.getRange(lastRow, 8).setFontColor('#2E7D32').setFontWeight('bold');
+    sheet.getRange(lastRow, 8).setFontColor('#2E7D32').setFontWeight('bold');  // 수익률
+    sheet.getRange(lastRow, 9).setFontColor('#2E7D32').setFontWeight('bold');  // 손익
   } else if (profitPercent < 0) {
-    sheet.getRange(lastRow, 7).setFontColor('#C62828').setFontWeight('bold');
     sheet.getRange(lastRow, 8).setFontColor('#C62828').setFontWeight('bold');
+    sheet.getRange(lastRow, 9).setFontColor('#C62828').setFontWeight('bold');
   }
 
   // 누적수익률 색상
   if (totalReturnPercent > 0) {
-    sheet.getRange(lastRow, 10).setFontColor('#2E7D32').setFontWeight('bold');
+    sheet.getRange(lastRow, 11).setFontColor('#2E7D32').setFontWeight('bold');  // 누적수익률
   } else if (totalReturnPercent < 0) {
-    sheet.getRange(lastRow, 10).setFontColor('#C62828').setFontWeight('bold');
+    sheet.getRange(lastRow, 11).setFontColor('#C62828').setFontWeight('bold');
   }
 
-  sheet.getRange(lastRow, 9).setFontWeight('bold').setBackground('#E3F2FD');
+  sheet.getRange(lastRow, 10).setFontWeight('bold').setBackground('#E3F2FD');  // 잔고($) 열
 
   // 통계 업데이트
   updateStatistics(sheet, newBalance, totalReturnPercent, isWin, exitType);
@@ -1439,9 +1443,9 @@ function createTradeSheet(ss) {
 
   sheet.getRange(2, 1, 2, 11).setBackground('#E3F2FD');
 
-  // 헤더
+  // 헤더 (마켓 열 추가)
   var headers = [
-    '날짜', '시간', '신호', '진입가', '청산가',
+    '날짜', '시간', '마켓', '신호', '진입가', '청산가',
     '청산유형', '수익률', '손익($)', '잔고($)', '누적수익률', '메모'
   ];
 
@@ -1452,26 +1456,27 @@ function createTradeSheet(ss) {
     .setFontWeight('bold')
     .setHorizontalAlignment('center');
 
-  sheet.setColumnWidth(1, 100);
-  sheet.setColumnWidth(2, 80);
-  sheet.setColumnWidth(3, 70);
-  sheet.setColumnWidth(4, 100);
-  sheet.setColumnWidth(5, 100);
-  sheet.setColumnWidth(6, 120);
-  sheet.setColumnWidth(7, 80);
-  sheet.setColumnWidth(8, 80);
-  sheet.setColumnWidth(9, 100);
-  sheet.setColumnWidth(10, 100);
-  sheet.setColumnWidth(11, 150);
+  sheet.setColumnWidth(1, 100);  // 날짜
+  sheet.setColumnWidth(2, 80);   // 시간
+  sheet.setColumnWidth(3, 90);   // 마켓
+  sheet.setColumnWidth(4, 70);   // 신호
+  sheet.setColumnWidth(5, 100);  // 진입가
+  sheet.setColumnWidth(6, 100);  // 청산가
+  sheet.setColumnWidth(7, 120);  // 청산유형
+  sheet.setColumnWidth(8, 80);   // 수익률
+  sheet.setColumnWidth(9, 90);   // 손익($)
+  sheet.setColumnWidth(10, 100); // 잔고($)
+  sheet.setColumnWidth(11, 100); // 누적수익률
+  sheet.setColumnWidth(12, 150); // 메모
 
   sheet.setFrozenRows(4);
 
   // 초기 잔고 행
   sheet.appendRow([
-    '시작', '-', '-', '-', '-', '[초기잔고]', '-', '-',
-    VIRTUAL_TRADING.STARTING_BALANCE.toFixed(2), '0.00%', '시뮬레이션 시작'
+    '시작', '-', '-', '-', '-', '-', '[초기잔고]', '-', '-',
+    '$' + VIRTUAL_TRADING.STARTING_BALANCE.toFixed(2), '0.00%', '시뮬레이션 시작'
   ]);
-  sheet.getRange(5, 9).setFontWeight('bold').setBackground('#E3F2FD');
+  sheet.getRange(5, 10).setFontWeight('bold').setBackground('#E3F2FD');  // 잔고($) 열
 
   return sheet;
 }
@@ -3598,11 +3603,13 @@ function syncBitgetPositions() {
  */
 function checkClosedPositions(bitgetPositions) {
   // 트리거에서 직접 호출 시 Bitget에서 포지션 가져오기
-  if (!bitgetPositions) {
+  if (!bitgetPositions || !Array.isArray(bitgetPositions)) {
     bitgetPositions = getBitgetPositions();
-    if (!bitgetPositions) {
-      bitgetPositions = [];
-    }
+  }
+
+  // 배열이 아니면 빈 배열로 설정
+  if (!Array.isArray(bitgetPositions)) {
+    bitgetPositions = [];
   }
 
   var props = PropertiesService.getScriptProperties();
