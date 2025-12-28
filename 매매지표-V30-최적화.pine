@@ -833,17 +833,49 @@ if barstate.islast
     table.cell(infoTable, 0, 12, "SIGNAL", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 30))
     table.cell(infoTable, 1, 12, finalText, text_color=finalColor, text_size=size.small, bgcolor=color.new(color.gray, 30))
 
-    // TP/SL 가격 표시
-    float displayTP1 = close * (1 + tpPct1/100)
-    float displayTP2 = close * (1 + tpPct2/100)
-    float displaySL = close * (1 - slPct/100)
-
+    // TP/SL 가격 표시 (시그널 발생 시에만)
     table.cell(infoTable, 0, 13, "TP1", text_color=color.black, text_size=size.small)
-    table.cell(infoTable, 1, 13, str.tostring(displayTP1, "#.#") + " (+" + str.tostring(tpPct1, "#.##") + "%)", text_color=color.green, text_size=size.small)
     table.cell(infoTable, 0, 14, "TP2", text_color=color.black, text_size=size.small)
-    table.cell(infoTable, 1, 14, str.tostring(displayTP2, "#.#") + " (+" + str.tostring(tpPct2, "#.##") + "%)", text_color=color.teal, text_size=size.small)
     table.cell(infoTable, 0, 15, "SL", text_color=color.black, text_size=size.small)
-    table.cell(infoTable, 1, 15, str.tostring(displaySL, "#.#") + " (-" + str.tostring(slPct, "#.##") + "%)", text_color=color.red, text_size=size.small)
+
+    if longSignal_final
+        float displayTP1 = close * (1 + tpPct1/100)
+        float displayTP2 = close * (1 + tpPct2/100)
+        float displaySL = close * (1 - slPct/100)
+        table.cell(infoTable, 1, 13, str.tostring(displayTP1, "#.#") + " (+" + str.tostring(tpPct1, "#.##") + "%)", text_color=color.green, text_size=size.small)
+        table.cell(infoTable, 1, 14, str.tostring(displayTP2, "#.#") + " (+" + str.tostring(tpPct2, "#.##") + "%)", text_color=color.teal, text_size=size.small)
+        table.cell(infoTable, 1, 15, str.tostring(displaySL, "#.#") + " (-" + str.tostring(slPct, "#.##") + "%)", text_color=color.red, text_size=size.small)
+    else if shortSignal_final
+        float sTP1Pct = tpPct1 * 0.85
+        float sTP2Pct = tpPct2 * 0.9
+        float sSLPct = slPct * 0.7
+        float displayTP1 = close * (1 - sTP1Pct/100)
+        float displayTP2 = close * (1 - sTP2Pct/100)
+        float displaySL = close * (1 + sSLPct/100)
+        table.cell(infoTable, 1, 13, str.tostring(displayTP1, "#.#") + " (-" + str.tostring(sTP1Pct, "#.##") + "%)", text_color=color.green, text_size=size.small)
+        table.cell(infoTable, 1, 14, str.tostring(displayTP2, "#.#") + " (-" + str.tostring(sTP2Pct, "#.##") + "%)", text_color=color.teal, text_size=size.small)
+        table.cell(infoTable, 1, 15, str.tostring(displaySL, "#.#") + " (+" + str.tostring(sSLPct, "#.##") + "%)", text_color=color.red, text_size=size.small)
+    else if strategy.position_size > 0
+        float displayTP1 = strategy.position_avg_price * (1 + tpPct1/100)
+        float displayTP2 = strategy.position_avg_price * (1 + tpPct2/100)
+        float displaySL = strategy.position_avg_price * (1 - slPct/100)
+        table.cell(infoTable, 1, 13, str.tostring(displayTP1, "#.#"), text_color=color.green, text_size=size.small)
+        table.cell(infoTable, 1, 14, str.tostring(displayTP2, "#.#"), text_color=color.teal, text_size=size.small)
+        table.cell(infoTable, 1, 15, str.tostring(displaySL, "#.#"), text_color=color.red, text_size=size.small)
+    else if strategy.position_size < 0
+        float sTP1Pct = tpPct1 * 0.85
+        float sTP2Pct = tpPct2 * 0.9
+        float sSLPct = slPct * 0.7
+        float displayTP1 = strategy.position_avg_price * (1 - sTP1Pct/100)
+        float displayTP2 = strategy.position_avg_price * (1 - sTP2Pct/100)
+        float displaySL = strategy.position_avg_price * (1 + sSLPct/100)
+        table.cell(infoTable, 1, 13, str.tostring(displayTP1, "#.#"), text_color=color.green, text_size=size.small)
+        table.cell(infoTable, 1, 14, str.tostring(displayTP2, "#.#"), text_color=color.teal, text_size=size.small)
+        table.cell(infoTable, 1, 15, str.tostring(displaySL, "#.#"), text_color=color.red, text_size=size.small)
+    else
+        table.cell(infoTable, 1, 13, "-", text_color=color.gray, text_size=size.small)
+        table.cell(infoTable, 1, 14, "-", text_color=color.gray, text_size=size.small)
+        table.cell(infoTable, 1, 15, "-", text_color=color.gray, text_size=size.small)
 
     // 캔들 패턴 상태
     string patternStatus = bullishCandlePattern ? "BULL" : bearishCandlePattern ? "BEAR" : "-"
