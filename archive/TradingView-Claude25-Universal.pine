@@ -61,6 +61,11 @@ strictMode = input.bool(true, title="엄격 모드")
 useMultiTF = input.bool(true, title="멀티타임프레임 필터")
 useADXFilter = input.bool(false, title="ADX 필터 사용", tooltip="ON: 횡보장 필터링 (엄격), OFF: ADX는 보너스 점수만")
 
+// 🚀 성능 최적화: 신호 표시 범위 제한
+signalDisplayBars = input.int(200, title="📊 신호 표시 범위 (바)", minval=50, maxval=500, step=50,
+     tooltip="최근 N개 바에서만 신호 표시 (성능 향상)")
+isRecentBar = bar_index >= (last_bar_index - signalDisplayBars)
+
 // ============================================
 // 👶 초보자 모드 설정
 // ============================================
@@ -127,6 +132,31 @@ ma15 = ta.sma(close, 15)
 ma50 = ta.sma(close, 50)
 ma100 = ta.sma(close, 100)
 ma200 = ta.sma(close, 200)
+
+// ============================================
+// 🔥 인기 EMA (트레이더 필수)
+// ============================================
+ema9 = ta.ema(close, 9)    // 초단기 (스캘핑)
+ema21 = ta.ema(close, 21)  // 단기 추세
+ema55 = ta.ema(close, 55)  // 중기 (피보나치)
+
+// EMA 크로스 신호
+ema9_21_goldenCross = ta.crossover(ema9, ema21)   // 9가 21 위로 = 매수
+ema9_21_deadCross = ta.crossunder(ema9, ema21)    // 9가 21 아래로 = 매도
+
+// EMA 정배열/역배열
+emaAlignBullish = ema9 > ema21 and ema21 > ema55  // 정배열 (상승추세)
+emaAlignBearish = ema9 < ema21 and ema21 < ema55  // 역배열 (하락추세)
+
+// 50/200 골든크로스/데드크로스
+goldenCross50_200 = ta.crossover(ma50, ma200)     // 강세 전환
+deadCross50_200 = ta.crossunder(ma50, ma200)      // 약세 전환
+
+// 가격과 EMA 관계
+priceAboveEma21 = close > ema21
+priceBelowEma21 = close < ema21
+priceAboveEma55 = close > ema55
+priceBelowEma55 = close < ema55
 
 // POC 근사값
 var float pocPrice = close
@@ -284,6 +314,299 @@ priceHigh2 = ta.highest(high[5], 5)
 rsiHigh1 = ta.highest(divRsi, 5)
 rsiHigh2 = ta.highest(divRsi[5], 5)
 bearishDivergence = priceHigh1 > priceHigh2 and rsiHigh1 < rsiHigh2 and divRsi > 60
+
+// ============================================
+// 🕯️ 캔들스틱 패턴 감지
+// ============================================
+showCandlePatterns = input.bool(true, title="캔들 패턴 표시", group="Price Action")
+
+// 캔들 기본 계산
+bodySize = math.abs(close - open)
+upperWick = high - math.max(close, open)
+lowerWick = math.min(close, open) - low
+totalRange = high - low
+avgBody = ta.sma(bodySize, 14)
+
+// 불리시 캔들 vs 베어리시 캔들
+isBullishCandle = close > open
+isBearishCandle = close < open
+
+// 1. 망치형 (Hammer) - 하락 후 긴 아래꼬리
+isHammer = lowerWick > bodySize * 2 and upperWick < bodySize * 0.5 and isBullishCandle and close[1] < open[1]
+
+// 2. 역망치형 (Inverted Hammer) - 하락 후 긴 위꼬리
+isInvertedHammer = upperWick > bodySize * 2 and lowerWick < bodySize * 0.5 and close[1] < open[1]
+
+// 3. 교수형 (Hanging Man) - 상승 후 긴 아래꼬리 (하락 신호)
+isHangingMan = lowerWick > bodySize * 2 and upperWick < bodySize * 0.5 and close[1] > open[1]
+
+// 4. 슈팅스타 (Shooting Star) - 상승 후 긴 위꼬리 (하락 신호)
+isShootingStar = upperWick > bodySize * 2 and lowerWick < bodySize * 0.5 and isBearishCandle and close[1] > open[1]
+
+// 5. 불리시 장악형 (Bullish Engulfing)
+isBullishEngulfing = isBullishCandle and isBearishCandle[1] and
+                     open <= close[1] and close >= open[1] and
+                     bodySize > bodySize[1] * 1.2
+
+// 6. 베어리시 장악형 (Bearish Engulfing)
+isBearishEngulfing = isBearishCandle and isBullishCandle[1] and
+                     open >= close[1] and close <= open[1] and
+                     bodySize > bodySize[1] * 1.2
+
+// 7. 도지 (Doji) - 시가와 종가가 거의 같음
+isDoji = bodySize < totalRange * 0.1 and totalRange > avgBody * 0.5
+
+// 8. 핀바 (Pin Bar) - 긴 꼬리 + 작은 몸통
+isPinBarBullish = lowerWick > totalRange * 0.6 and bodySize < totalRange * 0.3
+isPinBarBearish = upperWick > totalRange * 0.6 and bodySize < totalRange * 0.3
+
+// 9. 샛별 (Morning Star) - 3캔들 상승 반전
+isMorningStar = isBearishCandle[2] and bodySize[2] > avgBody and
+                bodySize[1] < avgBody * 0.5 and
+                isBullishCandle and close > (open[2] + close[2]) / 2
+
+// 10. 석별 (Evening Star) - 3캔들 하락 반전
+isEveningStar = isBullishCandle[2] and bodySize[2] > avgBody and
+                bodySize[1] < avgBody * 0.5 and
+                isBearishCandle and close < (open[2] + close[2]) / 2
+
+// 캔들 패턴 종합 (매수/매도)
+bullishCandlePattern = isHammer or isInvertedHammer or isBullishEngulfing or isPinBarBullish or isMorningStar
+bearishCandlePattern = isHangingMan or isShootingStar or isBearishEngulfing or isPinBarBearish or isEveningStar
+
+// ============================================
+// 📊 추세 구조 분석 (HH/HL/LH/LL)
+// ============================================
+showStructure = input.bool(true, title="추세 구조 표시", group="Price Action")
+structureLength = input.int(5, title="구조 분석 길이", minval=3, maxval=10, group="Price Action")
+
+// 스윙 고점/저점 감지
+swingHigh = ta.pivothigh(high, structureLength, structureLength)
+swingLow = ta.pivotlow(low, structureLength, structureLength)
+
+// 최근 스윙 포인트 저장
+var float lastSwingHigh = na
+var float prevSwingHigh = na
+var float lastSwingLow = na
+var float prevSwingLow = na
+
+if not na(swingHigh)
+    prevSwingHigh := lastSwingHigh
+    lastSwingHigh := swingHigh
+
+if not na(swingLow)
+    prevSwingLow := lastSwingLow
+    lastSwingLow := swingLow
+
+// 추세 구조 판단
+isHigherHigh = not na(swingHigh) and not na(prevSwingHigh) and swingHigh > prevSwingHigh
+isLowerHigh = not na(swingHigh) and not na(prevSwingHigh) and swingHigh < prevSwingHigh
+isHigherLow = not na(swingLow) and not na(prevSwingLow) and swingLow > prevSwingLow
+isLowerLow = not na(swingLow) and not na(prevSwingLow) and swingLow < prevSwingLow
+
+// 추세 상태
+var string trendStructure = "중립"
+if isHigherHigh and isHigherLow
+    trendStructure := "상승"
+else if isLowerHigh and isLowerLow
+    trendStructure := "하락"
+else if isHigherHigh or isHigherLow
+    trendStructure := "상승"
+else if isLowerHigh or isLowerLow
+    trendStructure := "하락"
+
+// 구조 이탈 (Break of Structure)
+var float bosLevel = na
+isBullishBOS = not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh
+isBearishBOS = not na(lastSwingLow) and close < lastSwingLow and close[1] >= lastSwingLow
+
+// ============================================
+// 🚀 모멘텀 분석 (가격 가속/감속)
+// ============================================
+showMomentum = input.bool(true, title="모멘텀 표시", group="Price Action")
+momentumLength = input.int(10, title="모멘텀 길이", minval=5, maxval=20, group="Price Action")
+
+// Rate of Change (ROC)
+roc = (close - close[momentumLength]) / close[momentumLength] * 100
+rocSma = ta.sma(roc, 5)
+
+// 모멘텀 가속/감속
+momentum = close - close[1]
+momentumAvg = ta.sma(momentum, momentumLength)
+momentumAccel = momentum - momentum[1]  // 가속도
+
+// 모멘텀 상태
+isAccelerating = momentumAccel > 0 and momentum > 0  // 상승 가속
+isDecelerating = momentumAccel < 0 and momentum > 0  // 상승 감속
+isFallingFaster = momentumAccel < 0 and momentum < 0  // 하락 가속
+isSlowingDown = momentumAccel > 0 and momentum < 0    // 하락 감속 (반등 조짐)
+
+// 강한 모멘텀
+strongBullMomentum = roc > 1.5 and rocSma > 0 and isAccelerating
+strongBearMomentum = roc < -1.5 and rocSma < 0 and isFallingFaster
+
+// 모멘텀 전환 신호
+momentumBullishShift = isSlowingDown and roc > rocSma  // 하락 감속 + ROC 상승
+momentumBearishShift = isDecelerating and roc < rocSma  // 상승 감속 + ROC 하락
+
+// ============================================
+// 🎯 Price Action 종합 점수 (최대 6점)
+// ============================================
+var float priceActionScoreLong = 0.0
+priceActionScoreLong := 0.0
+
+if bullishCandlePattern
+    priceActionScoreLong += 2
+if trendStructure == "상승"
+    priceActionScoreLong += 2
+if strongBullMomentum or momentumBullishShift
+    priceActionScoreLong += 2
+
+var float priceActionScoreShort = 0.0
+priceActionScoreShort := 0.0
+
+if bearishCandlePattern
+    priceActionScoreShort += 2
+if trendStructure == "하락"
+    priceActionScoreShort += 2
+if strongBearMomentum or momentumBearishShift
+    priceActionScoreShort += 2
+
+// ============================================
+// 📐 인범 빗각 (Diagonal Angle) 분석
+// ※ MTF: 큰 시간대 빗각을 작은 시간대에서 표시
+// ============================================
+showBitgak = input.bool(true, title="📐 빗각 표시", group="빗각 설정")
+bitgakTimeframe = input.string("자동", title="빗각 기준 시간대",
+     options=["자동", "1시간", "4시간", "일봉", "주봉"], group="빗각 설정",
+     tooltip="자동: 현재 시간대에 맞게 자동 선택\n작은 시간대에서 큰 시간대 빗각 확인 가능")
+bitgakPivotLen = input.int(10, title="피봇 감지 길이", minval=3, maxval=30, group="빗각 설정")
+bitgakChannelPct = input.float(2.0, title="채널 폭 (%)", minval=0.5, maxval=5.0, step=0.5, group="빗각 설정")
+
+// 시간대 체크 (분 단위로 변환)
+tfInMinutes = timeframe.in_seconds() / 60
+
+// 빗각 기준 시간대 결정
+getBitgakTF() =>
+    if bitgakTimeframe == "1시간"
+        "60"
+    else if bitgakTimeframe == "4시간"
+        "240"
+    else if bitgakTimeframe == "일봉"
+        "D"
+    else if bitgakTimeframe == "주봉"
+        "W"
+    else  // 자동
+        if tfInMinutes < 60
+            "60"      // 1시간 미만 → 1시간봉 빗각
+        else if tfInMinutes < 240
+            "240"     // 1시간~4시간 → 4시간봉 빗각
+        else if tfInMinutes < 1440
+            "D"       // 4시간~일봉 → 일봉 빗각
+        else
+            "W"       // 일봉 이상 → 주봉 빗각
+
+bitgakTF = getBitgakTF()
+bitgakEnabled = showBitgak
+
+// ========== MTF 빗각 계산 함수 ==========
+// 큰 시간대에서 빗각선 가격을 계산하는 함수
+calcBitgakLine(float _high, float _low, int _pivotLen) =>
+    // 피봇 감지
+    float pivH = ta.pivothigh(_high, _pivotLen, _pivotLen)
+    float pivL = ta.pivotlow(_low, _pivotLen, _pivotLen)
+
+    // 저장 변수
+    var float startPrice = na
+    var int startIdx = na
+    var float endPrice = na
+    var int endIdx = na
+    var float slope = na
+
+    // 고점 감지 → 시작점
+    if not na(pivH)
+        startPrice := pivH
+        startIdx := bar_index - _pivotLen
+        endPrice := na
+        endIdx := na
+        slope := na
+
+    // 저점 감지 → 끝점
+    if not na(pivL) and not na(startIdx) and bar_index - _pivotLen > startIdx
+        if pivL < startPrice
+            endPrice := pivL
+            endIdx := bar_index - _pivotLen
+            if endIdx != startIdx
+                slope := (endPrice - startPrice) / (endIdx - startIdx)
+
+    // 현재 빗각선 가격
+    float linePrice = na
+    if not na(slope) and not na(startPrice) and not na(startIdx)
+        linePrice := startPrice + (bar_index - startIdx) * slope
+
+    [linePrice, startPrice, startIdx, endPrice, endIdx, slope]
+
+// MTF 빗각 데이터 가져오기
+[mtfBitgakLine, mtfStartPrice, mtfStartIdx, mtfEndPrice, mtfEndIdx, mtfSlope] =
+     request.security(syminfo.tickerid, bitgakTF, calcBitgakLine(high, low, bitgakPivotLen))
+
+// 현재 시간대 빗각 (비교용)
+[currBitgakLine, currStartPrice, currStartIdx, currEndPrice, currEndIdx, currSlope] =
+     calcBitgakLine(high, low, bitgakPivotLen)
+
+// 최종 빗각선 값 (MTF 우선)
+float bitgakLine = na(mtfBitgakLine) ? currBitgakLine : mtfBitgakLine
+float bitgakStartPrice = na(mtfStartPrice) ? currStartPrice : mtfStartPrice
+int bitgakStartBar = na(mtfStartIdx) ? currStartIdx : mtfStartIdx
+float bitgakEndPrice = na(mtfEndPrice) ? currEndPrice : mtfEndPrice
+int bitgakEndBar = na(mtfEndIdx) ? currEndIdx : mtfEndIdx
+float bitgakSlope = na(mtfSlope) ? currSlope : mtfSlope
+
+// 채널 하단
+float bitgakChannelLow = not na(bitgakLine) ? bitgakLine * (1 - bitgakChannelPct / 100) : na
+
+// 빗각 대비 현재 가격 위치
+priceAboveBitgak = not na(bitgakLine) and close > bitgakLine
+priceBelowBitgak = not na(bitgakLine) and close < bitgakLine
+priceAtBitgak = not na(bitgakLine) and math.abs(close - bitgakLine) / bitgakLine < 0.003  // 0.3% 이내
+
+// 빗각 터치 신호 (롱 진입 구간) - 더 엄격한 조건
+// 조건: 이전 3봉이 빗각선 위에 있다가 현재 저점이 빗각선을 터치하고 종가는 위에서 마감
+var int lastBitgakSignalBar = 0
+bool recentBitgakSignal = bar_index - lastBitgakSignalBar < 20  // 20봉 이내 신호 있었으면 스킵
+
+bool bitgakTouchCondition = not na(bitgakLine) and
+     low <= bitgakLine * 1.003 and              // 저점이 빗각선 0.3% 이내 터치
+     low >= bitgakLine * 0.990 and              // 너무 깊이 뚫지 않음
+     close > bitgakLine and                      // 종가는 빗각선 위
+     close[1] > bitgakLine and                   // 이전봉 종가도 위
+     close[2] > bitgakLine and                   // 2봉전도 위
+     not recentBitgakSignal                      // 최근 신호 없음
+
+bitgakLongSignal = bitgakTouchCondition
+
+// 신호 발생시 바 기록
+if bitgakLongSignal
+    lastBitgakSignalBar := bar_index
+
+// 빗각 이탈 신호 (위험) - 빗각선 하향 돌파
+bitgakBreakdown = not na(bitgakLine) and close < bitgakLine * 0.995 and close[1] >= bitgakLine
+
+// 채널 내 진입 여부
+inBitgakChannel = not na(bitgakLine) and not na(bitgakChannelLow) and close >= bitgakChannelLow and close <= bitgakLine
+
+// 빗각 점수 (최대 4점)
+var float bitgakScore = 0.0
+bitgakScore := 0.0
+
+if bitgakLongSignal
+    bitgakScore += 4  // 빗각 터치 = 최고의 롱 진입 구간
+else if priceAtBitgak
+    bitgakScore += 3  // 빗각 근처
+else if inBitgakChannel
+    bitgakScore += 2  // 채널 내 = 양호
+else if priceAboveBitgak
+    bitgakScore += 0  // 빗각 위 = 대기 (점수 없음)
 
 // ============================================
 // 🎯 중요 구간 감지
@@ -456,14 +779,43 @@ if isDistribution
     whaleScoreShort += 1
 
 // ============================================
+// 🔥 EMA 보너스 점수 (최대 6점)
+// ============================================
+var float emaScoreLong = 0.0
+emaScoreLong := 0.0
+
+// LONG용 EMA 점수
+if emaAlignBullish           // EMA 정배열 (9>21>55)
+    emaScoreLong += 3
+if priceAboveEma21           // 가격 > EMA21
+    emaScoreLong += 1
+if priceAboveEma55           // 가격 > EMA55
+    emaScoreLong += 1
+if ema9_21_goldenCross       // 9/21 골든크로스 발생
+    emaScoreLong += 1
+
+// SHORT용 EMA 점수
+var float emaScoreShort = 0.0
+emaScoreShort := 0.0
+
+if emaAlignBearish           // EMA 역배열 (9<21<55)
+    emaScoreShort += 3
+if priceBelowEma21           // 가격 < EMA21
+    emaScoreShort += 1
+if priceBelowEma55           // 가격 < EMA55
+    emaScoreShort += 1
+if ema9_21_deadCross         // 9/21 데드크로스 발생
+    emaScoreShort += 1
+
+// ============================================
 // 🎯 최종 신호 결정 (모드별 처리)
 // ============================================
 
 var float totalScore = 0.0
-totalScore := bulJangScore + claude21Score + filterScore + whaleScore
+totalScore := bulJangScore + claude21Score + filterScore + whaleScore + emaScoreLong + priceActionScoreLong + bitgakScore
 
 var float totalScoreShort = 0.0
-totalScoreShort := bulJangScore + claude21Score + filterScore + whaleScoreShort
+totalScoreShort := bulJangScore + claude21Score + filterScore + whaleScoreShort + emaScoreShort + priceActionScoreShort
 
 // 기본 LONG 신호
 longSignal_final = bulJangScore >= 5 and longSignal_basic and totalScore >= minSignalStrength
@@ -537,6 +889,135 @@ plot(vwap100, color=color.new(color.purple, 0), linewidth=3, title="VWAP 100")
 plot(ma50, color=color.new(color.orange, 0), linewidth=2, title="MA 50")
 plot(ma200, color=color.new(color.blue, 0), linewidth=2, title="MA 200")
 
+// 🔥 인기 EMA (9/21/55)
+plot(ema9, color=color.new(color.yellow, 0), linewidth=1, title="EMA 9")
+plot(ema21, color=color.new(color.lime, 0), linewidth=2, title="EMA 21")
+plot(ema55, color=color.new(color.aqua, 0), linewidth=2, title="EMA 55")
+
+// EMA 크로스 신호 표시 (최근 바만)
+plotshape(isRecentBar and ema9_21_goldenCross, style=shape.labelup, location=location.belowbar,
+         color=color.new(color.lime, 0), size=size.tiny, text="9/21\nGC", textcolor=color.white, title="EMA 9/21 골든크로스")
+plotshape(isRecentBar and ema9_21_deadCross, style=shape.labeldown, location=location.abovebar,
+         color=color.new(color.red, 0), size=size.tiny, text="9/21\nDC", textcolor=color.white, title="EMA 9/21 데드크로스")
+
+// 50/200 골든크로스/데드크로스 (중요!)
+plotshape(isRecentBar and goldenCross50_200, style=shape.labelup, location=location.belowbar,
+         color=color.new(color.green, 0), size=size.small, text="🚀\nGolden", textcolor=color.white, title="50/200 골든크로스")
+plotshape(isRecentBar and deadCross50_200, style=shape.labeldown, location=location.abovebar,
+         color=color.new(color.maroon, 0), size=size.small, text="💀\nDeath", textcolor=color.white, title="50/200 데드크로스")
+
+// ============================================
+// 🕯️ 캔들 패턴 표시 (최근 바만)
+// ============================================
+// 망치형/역망치형 (상승 반전)
+plotshape(isRecentBar and showCandlePatterns and isHammer, style=shape.labelup, location=location.belowbar,
+         color=color.new(color.teal, 0), size=size.tiny, text="H", textcolor=color.white, title="망치형")
+plotshape(isRecentBar and showCandlePatterns and isInvertedHammer, style=shape.labelup, location=location.belowbar,
+         color=color.new(color.teal, 0), size=size.tiny, text="iH", textcolor=color.white, title="역망치형")
+
+// 교수형/슈팅스타 (하락 반전)
+plotshape(isRecentBar and showCandlePatterns and isHangingMan, style=shape.labeldown, location=location.abovebar,
+         color=color.new(color.orange, 0), size=size.tiny, text="HM", textcolor=color.white, title="교수형")
+plotshape(isRecentBar and showCandlePatterns and isShootingStar, style=shape.labeldown, location=location.abovebar,
+         color=color.new(color.orange, 0), size=size.tiny, text="SS", textcolor=color.white, title="슈팅스타")
+
+// 장악형 (강한 반전)
+plotshape(isRecentBar and showCandlePatterns and isBullishEngulfing, style=shape.labelup, location=location.belowbar,
+         color=color.new(color.green, 0), size=size.tiny, text="BE", textcolor=color.white, title="불리시 장악형")
+plotshape(isRecentBar and showCandlePatterns and isBearishEngulfing, style=shape.labeldown, location=location.abovebar,
+         color=color.new(color.red, 0), size=size.tiny, text="BE", textcolor=color.white, title="베어리시 장악형")
+
+// 샛별/석별 (3캔들 반전)
+plotshape(isRecentBar and showCandlePatterns and isMorningStar, style=shape.labelup, location=location.belowbar,
+         color=color.new(color.lime, 0), size=size.small, text="⭐", textcolor=color.white, title="샛별")
+plotshape(isRecentBar and showCandlePatterns and isEveningStar, style=shape.labeldown, location=location.abovebar,
+         color=color.new(color.maroon, 0), size=size.small, text="🌙", textcolor=color.white, title="석별")
+
+// ============================================
+// 📊 추세 구조 표시 (HH/HL/LH/LL) - 최근 바만
+// ============================================
+plotshape(isRecentBar and showStructure and isHigherHigh, style=shape.triangleup, location=location.abovebar,
+         color=color.new(color.green, 30), size=size.tiny, text="HH", textcolor=color.green, title="Higher High", offset=-structureLength)
+plotshape(isRecentBar and showStructure and isHigherLow, style=shape.triangleup, location=location.belowbar,
+         color=color.new(color.green, 30), size=size.tiny, text="HL", textcolor=color.green, title="Higher Low", offset=-structureLength)
+plotshape(isRecentBar and showStructure and isLowerHigh, style=shape.triangledown, location=location.abovebar,
+         color=color.new(color.red, 30), size=size.tiny, text="LH", textcolor=color.red, title="Lower High", offset=-structureLength)
+plotshape(isRecentBar and showStructure and isLowerLow, style=shape.triangledown, location=location.belowbar,
+         color=color.new(color.red, 30), size=size.tiny, text="LL", textcolor=color.red, title="Lower Low", offset=-structureLength)
+
+// 구조 이탈 (BOS)
+plotshape(isRecentBar and showStructure and isBullishBOS, style=shape.labelup, location=location.belowbar,
+         color=color.new(color.blue, 0), size=size.small, text="BOS\n↑", textcolor=color.white, title="상승 구조이탈")
+plotshape(isRecentBar and showStructure and isBearishBOS, style=shape.labeldown, location=location.abovebar,
+         color=color.new(color.purple, 0), size=size.small, text="BOS\n↓", textcolor=color.white, title="하락 구조이탈")
+
+// ============================================
+// 🚀 모멘텀 표시 (최근 바만)
+// ============================================
+plotshape(isRecentBar and showMomentum and strongBullMomentum, style=shape.arrowup, location=location.belowbar,
+         color=color.new(color.lime, 0), size=size.tiny, title="강한 상승 모멘텀")
+plotshape(isRecentBar and showMomentum and strongBearMomentum, style=shape.arrowdown, location=location.abovebar,
+         color=color.new(color.red, 0), size=size.tiny, title="강한 하락 모멘텀")
+plotshape(isRecentBar and showMomentum and momentumBullishShift, style=shape.diamond, location=location.belowbar,
+         color=color.new(color.aqua, 0), size=size.tiny, title="모멘텀 상승 전환")
+plotshape(isRecentBar and showMomentum and momentumBearishShift, style=shape.diamond, location=location.abovebar,
+         color=color.new(color.orange, 0), size=size.tiny, title="모멘텀 하락 전환")
+
+// ============================================
+// 📐 빗각 표시 (인범식) - MTF line.new() 사용
+// ============================================
+var line bitgakMainLine = na
+var line bitgakChannelLine = na
+var label bitgakInfoLabel = na
+
+// 빗각 시간대 텍스트
+bitgakTFText = bitgakTF == "60" ? "1H" : bitgakTF == "240" ? "4H" : bitgakTF == "D" ? "1D" : bitgakTF == "W" ? "1W" : bitgakTF
+
+// 빗각선 그리기 (매 바마다 업데이트)
+if barstate.islast and bitgakEnabled and not na(bitgakLine) and not na(bitgakSlope)
+    // 기존 선/라벨 삭제
+    if not na(bitgakMainLine)
+        line.delete(bitgakMainLine)
+    if not na(bitgakChannelLine)
+        line.delete(bitgakChannelLine)
+    if not na(bitgakInfoLabel)
+        label.delete(bitgakInfoLabel)
+
+    // 과거 시작점 (현재에서 100봉 전)
+    int pastBars = 100
+    float pastPrice = bitgakLine - (pastBars * bitgakSlope)
+    float pastChannelPrice = pastPrice * (1 - bitgakChannelPct / 100)
+
+    // 미래 확장 (현재 바 + 50개 앞까지)
+    int futureBar = bar_index + 50
+    float futurePrice = bitgakLine + (50 * bitgakSlope)
+    float futureChannelPrice = futurePrice * (1 - bitgakChannelPct / 100)
+
+    // 빗각선 그리기 (과거 → 미래)
+    bitgakMainLine := line.new(bar_index - pastBars, pastPrice, futureBar, futurePrice,
+                               color=color.yellow, width=2, style=line.style_solid, extend=extend.none)
+
+    // 채널 하단선
+    bitgakChannelLine := line.new(bar_index - pastBars, pastChannelPrice, futureBar, futureChannelPrice,
+                                   color=color.new(color.yellow, 50), width=1, style=line.style_dashed, extend=extend.none)
+
+    // 정보 라벨 (시간대 표시)
+    string statusText = priceAboveBitgak ? "⏸️대기" : priceAtBitgak ? "🎯터치" : priceBelowBitgak ? "⚠️이탈" : ""
+    bitgakInfoLabel := label.new(bar_index + 5, bitgakLine, "📐 빗각[" + bitgakTFText + "]\n" + statusText,
+                                  style=label.style_label_left, color=color.new(color.yellow, 20),
+                                  textcolor=color.black, size=size.small)
+
+// 빗각 터치 신호 (롱 진입 최적) - 최근 바만
+plotshape(isRecentBar and bitgakEnabled and bitgakLongSignal, style=shape.labelup, location=location.belowbar,
+         color=color.new(color.orange, 0), size=size.small, text="빗각\nLONG", textcolor=color.white, title="빗각 롱 신호")
+
+// 빗각 이탈 경고
+plotshape(isRecentBar and bitgakEnabled and bitgakBreakdown, style=shape.xcross, location=location.belowbar,
+         color=color.new(color.red, 0), size=size.small, title="빗각 이탈")
+
+// 빗각 채널 내 배경 (선택적)
+bgcolor(bitgakEnabled and inBitgakChannel ? color.new(color.yellow, 92) : na, title="빗각 채널 구간")
+
 // Bollinger Bands
 plot(bbUpper, color=color.new(color.gray, 50), linewidth=1, title="BB Upper")
 plot(bbLower, color=color.new(color.gray, 50), linewidth=1, title="BB Lower")
@@ -545,34 +1026,35 @@ plot(bbLower, color=color.new(color.gray, 50), linewidth=1, title="BB Lower")
 plot(ema20_15m, color=color.new(color.green, 50), linewidth=1, title="EMA20 (15m)")
 plot(ema50_15m, color=color.new(color.red, 50), linewidth=1, title="EMA50 (15m)")
 
-// 신호 표시
-plotshape(longSignal_final, style=shape.triangleup, location=location.belowbar,
+// 신호 표시 (최근 바만)
+plotshape(isRecentBar and longSignal_final, style=shape.triangleup, location=location.belowbar,
          color=color.new(color.green, 0), size=size.normal, title="LONG 신호")
-plotshape(shortSignal_final and tradeMode == "선물", style=shape.triangledown, location=location.abovebar,
+plotshape(isRecentBar and shortSignal_final and tradeMode == "선물", style=shape.triangledown, location=location.abovebar,
          color=color.new(color.red, 0), size=size.normal, title="SHORT 신호")
 
-// 고래 신호
-plotshape(whaleBuying, style=shape.circle, location=location.belowbar,
+// 고래 신호 (최근 바만)
+plotshape(isRecentBar and whaleBuying, style=shape.circle, location=location.belowbar,
          color=color.new(color.lime, 0), size=size.tiny, title="고래 매수")
-plotshape(whaleSelling and tradeMode == "선물", style=shape.circle, location=location.abovebar,
+plotshape(isRecentBar and whaleSelling and tradeMode == "선물", style=shape.circle, location=location.abovebar,
          color=color.new(color.fuchsia, 0), size=size.tiny, title="고래 매도 (선물)")
 
-// 기관 신호
-plotshape(institutionBuying, style=shape.diamond, location=location.belowbar,
+// 기관 신호 (최근 바만)
+plotshape(isRecentBar and institutionBuying, style=shape.diamond, location=location.belowbar,
          color=color.new(color.aqua, 0), size=size.tiny, title="기관 매수")
-plotshape(institutionSelling and tradeMode == "선물", style=shape.diamond, location=location.abovebar,
+plotshape(isRecentBar and institutionSelling and tradeMode == "선물", style=shape.diamond, location=location.abovebar,
          color=color.new(color.purple, 0), size=size.tiny, title="기관 매도 (선물)")
 
-// EXIT 경고 (현물/주식)
-plotshape(whaleExitSignal, style=shape.xcross, location=location.abovebar,
+// EXIT 경고 (현물/주식) - 최근 바만
+plotshape(isRecentBar and whaleExitSignal, style=shape.xcross, location=location.abovebar,
          color=color.new(color.orange, 0), size=size.small, title="EXIT 경고")
 
 // 누적/분산 배경
-bgcolor(isAccumulation ? color.new(color.green, 90) : na, title="누적 구간")
-bgcolor(isDistribution ? color.new(color.red, 90) : na, title="분산 구간")
+// 배경색 정리: 중요한 것만 유지
+// bgcolor(isAccumulation ? color.new(color.green, 90) : na, title="누적 구간")
+// bgcolor(isDistribution ? color.new(color.red, 90) : na, title="분산 구간")
 
-// BB 스퀴즈 배경
-bgcolor(bbSqueeze ? color.new(color.yellow, 90) : na, title="BB 스퀴즈")
+// BB 스퀴즈 배경 (제거됨)
+// bgcolor(bbSqueeze ? color.new(color.yellow, 90) : na, title="BB 스퀴즈")
 
 // ============================================
 // 🔮 피봇 포인트 표시
@@ -597,9 +1079,9 @@ plot(showSR ? recentHigh : na, color=color.new(color.red, 40), linewidth=2, styl
 plot(showSR ? recentLow : na, color=color.new(color.green, 40), linewidth=2, style=plot.style_circles, title="지지선")
 plot(showSR ? srMiddle : na, color=color.new(color.gray, 60), linewidth=1, style=plot.style_cross, title="중심선")
 
-// 지지/저항 근처 배경 하이라이트
-bgcolor(showSR and nearResistance ? color.new(color.red, 85) : na, title="저항선 근처")
-bgcolor(showSR and nearSupport ? color.new(color.green, 85) : na, title="지지선 근처")
+// 지지/저항 근처 배경 하이라이트 (제거됨)
+// bgcolor(showSR and nearResistance ? color.new(color.red, 85) : na, title="저항선 근처")
+// bgcolor(showSR and nearSupport ? color.new(color.green, 85) : na, title="지지선 근처")
 
 // ============================================
 // 📈 다이버전스 표시
@@ -616,8 +1098,8 @@ plotshape(showDivergence and bearishDivergence, style=shape.labeldown, location=
 bgcolor(strongBuyZone ? color.new(color.lime, 70) : na, title="🟢 강한 매수 구간")
 // 강한 매도 구간 (데스 존)
 bgcolor(strongSellZone ? color.new(color.fuchsia, 70) : na, title="🔴 강한 매도 구간")
-// 변곡점 구간 (다이버전스)
-bgcolor(turningZone ? color.new(color.aqua, 80) : na, title="🔄 변곡점 구간")
+// 변곡점 구간 (제거됨)
+// bgcolor(turningZone ? color.new(color.aqua, 80) : na, title="🔄 변곡점 구간")
 
 // ============================================
 // 신호 라벨 표시
@@ -649,7 +1131,7 @@ if longSignal_final
     signalLabel := label.new(bar_index, low - (high - low) * 0.3,
                           text=modeEmoji + " LONG [" + modeText + "]\n" +
                                "진입: $" + str.tostring(close, "#.##") + "\n" +
-                               "점수: " + str.tostring(totalScore, "#.#") + "/28\n" +
+                               "점수: " + str.tostring(totalScore, "#.#") + "/44\n" +
                                "━━━━━━━━━━━━\n" +
                                "TP1: $" + str.tostring(labelTp1, "#.##") + " (+" + str.tostring(tpPct1, "#.#") + "%)\n" +
                                "TP2: $" + str.tostring(labelTp2, "#.##") + " (+" + str.tostring(tpPct2, "#.#") + "%)\n" +
@@ -684,7 +1166,7 @@ if shortSignal_final and tradeMode == "선물"
     signalLabel := label.new(bar_index, high + (high - low) * 0.3,
                           text="⚡ SHORT [FUTURES]\n" +
                                "진입: $" + str.tostring(close, "#.##") + "\n" +
-                               "점수: " + str.tostring(totalScoreShort, "#.#") + "/28\n" +
+                               "점수: " + str.tostring(totalScoreShort, "#.#") + "/44\n" +
                                "━━━━━━━━━━━━\n" +
                                "TP1: $" + str.tostring(labelTp1, "#.##") + " (+" + str.tostring(tpPct1, "#.#") + "%)\n" +
                                "TP2: $" + str.tostring(labelTp2, "#.##") + " (+" + str.tostring(tpPct2, "#.#") + "%)\n" +
@@ -791,7 +1273,7 @@ if barstate.islast and beginnerMode
     table.cell(beginnerTable, 0, 10, tpslGuide, text_color=color.black, text_size=size.small)
 
     // 7. 현재 점수
-    string scoreText = "📊 신호 점수: " + str.tostring(totalScore, "#") + "/28"
+    string scoreText = "📊 신호 점수: " + str.tostring(totalScore, "#") + "/44"
     color scoreColor = totalScore >= minSignalStrength ? color.green : totalScore >= minSignalStrength - 2 ? color.orange : color.gray
     table.cell(beginnerTable, 0, 11, scoreText, text_color=scoreColor, text_size=size.small,
               bgcolor=color.new(scoreColor, 80))
@@ -800,10 +1282,10 @@ if barstate.islast and beginnerMode
 // 정보 테이블 (전문가용)
 // ============================================
 
-var table infoTable = table.new(getTablePosition(detailTablePos), 2, 25, bgcolor=color.new(color.white, 10), border_width=1)
+var table infoTable = table.new(getTablePosition(detailTablePos), 2, 28, bgcolor=color.new(color.white, 10), border_width=1)
 
 if barstate.islast and showDetailTable
-    table.clear(infoTable, 0, 0, 1, 24)
+    table.clear(infoTable, 0, 0, 1, 27)
 
     // 모드 표시
     modeColor = tradeMode == "선물" ? color.purple : tradeMode == "현물코인" ? color.orange : color.blue
@@ -896,7 +1378,7 @@ if barstate.islast and showDetailTable
     // ═══════════════════════════════════════
     table.cell(infoTable, 0, 14, "━━ 점수 ━━", text_color=color.white, text_size=size.small,
               bgcolor=color.new(color.gray, 30))
-    table.cell(infoTable, 1, 14, str.tostring(totalScore, "#.#") + "/28", text_color=totalScore >= minSignalStrength ? color.green : color.gray,
+    table.cell(infoTable, 1, 14, str.tostring(totalScore, "#.#") + "/44", text_color=totalScore >= minSignalStrength ? color.green : color.gray,
               bgcolor=color.new(color.gray, 30))
 
     // 불장단타왕
@@ -914,49 +1396,67 @@ if barstate.islast and showDetailTable
     table.cell(infoTable, 1, 17, str.tostring(filterScore, "#") + "+" + str.tostring(whaleScore, "#") + "/10",
               text_color=(filterScore + whaleScore) >= 6 ? color.green : color.gray, text_size=size.small)
 
+    // 🔥 EMA 점수
+    table.cell(infoTable, 0, 18, "🔥 EMA", text_color=color.black, text_size=size.small)
+    string emaStatus = emaAlignBullish ? "정배열" : emaAlignBearish ? "역배열" : "혼조"
+    table.cell(infoTable, 1, 18, str.tostring(emaScoreLong, "#") + "/6 (" + emaStatus + ")",
+              text_color=emaScoreLong >= 4 ? color.green : emaScoreLong >= 2 ? color.orange : color.gray, text_size=size.small)
+
+    // 🕯️ Price Action 점수
+    table.cell(infoTable, 0, 19, "🕯️ P.Action", text_color=color.black, text_size=size.small)
+    string paStatus = bullishCandlePattern ? "매수패턴" : bearishCandlePattern ? "매도패턴" : trendStructure
+    table.cell(infoTable, 1, 19, str.tostring(priceActionScoreLong, "#") + "/6 (" + paStatus + ")",
+              text_color=priceActionScoreLong >= 4 ? color.green : priceActionScoreLong >= 2 ? color.orange : color.gray, text_size=size.small)
+
+    // 📐 빗각 점수
+    table.cell(infoTable, 0, 20, "📐 빗각", text_color=color.black, text_size=size.small)
+    string bitgakStatus = priceAtBitgak ? "터치!" : bitgakLongSignal ? "롱진입" : inBitgakChannel ? "채널내" : priceAboveBitgak ? "대기" : "채널외"
+    table.cell(infoTable, 1, 20, str.tostring(bitgakScore, "#") + "/4 (" + bitgakStatus + ")",
+              text_color=bitgakScore >= 4 ? color.green : bitgakScore >= 2 ? color.orange : color.gray, text_size=size.small)
+
     // ═══════════════════════════════════════
     // 📈 지표 상태 섹션
     // ═══════════════════════════════════════
-    table.cell(infoTable, 0, 18, "━━ 지표 ━━", text_color=color.white, text_size=size.small,
+    table.cell(infoTable, 0, 21, "━━ 지표 ━━", text_color=color.white, text_size=size.small,
               bgcolor=color.new(color.teal, 30))
-    table.cell(infoTable, 1, 18, "", bgcolor=color.new(color.teal, 30))
+    table.cell(infoTable, 1, 21, "", bgcolor=color.new(color.teal, 30))
 
     // StochRSI
-    table.cell(infoTable, 0, 19, "StochRSI", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 0, 22, "StochRSI", text_color=color.black, text_size=size.small)
     stochStatus = stochOversold ? "🟢 과매도 (매수)" : stochOverbought ? "🔴 과매수 (매도)" : stochK > 50 ? "⬆️ 상승중" : "⬇️ 하락중"
-    table.cell(infoTable, 1, 19, stochStatus + " (" + str.tostring(stochK, "#") + ")",
+    table.cell(infoTable, 1, 22, stochStatus + " (" + str.tostring(stochK, "#") + ")",
               text_color=stochOversold ? color.green : stochOverbought ? color.red : color.gray, text_size=size.small)
 
     // BB
-    table.cell(infoTable, 0, 20, "볼린저밴드", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 0, 23, "볼린저밴드", text_color=color.black, text_size=size.small)
     bbStatus = bbSqueeze ? "🟡 스퀴즈 (폭발예고)" : touchingBBLower ? "🟢 하단 (반등)" : touchingBBUpper ? "🔴 상단 (조정)" : "⚪ 중립"
-    table.cell(infoTable, 1, 20, bbStatus,
+    table.cell(infoTable, 1, 23, bbStatus,
               text_color=bbSqueeze ? color.yellow : touchingBBLower ? color.green : touchingBBUpper ? color.red : color.gray,
               text_size=size.small)
 
     // OI 상태
-    table.cell(infoTable, 0, 21, "📈 OI", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 0, 24, "📈 OI", text_color=color.black, text_size=size.small)
     oiStatus = oiPriceUp ? "🚀 강한상승" : oiPriceDown ? "📉 강한하락" : oiShortSqueeze ? "🔥 숏스퀴즈" : oiLongSqueeze ? "💥 롱스퀴즈" : oiIncreasing ? "⬆️ 증가" : oiDecreasing ? "⬇️ 감소" : "➡️ 안정"
     oiColor = oiPriceUp or oiShortSqueeze ? color.green : oiPriceDown or oiLongSqueeze ? color.red : color.gray
-    table.cell(infoTable, 1, 21, oiStatus, text_color=oiColor, text_size=size.small)
+    table.cell(infoTable, 1, 24, oiStatus, text_color=oiColor, text_size=size.small)
 
     // Funding Rate
-    table.cell(infoTable, 0, 22, "💰 펀딩비", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 0, 25, "💰 펀딩비", text_color=color.black, text_size=size.small)
     fundingStatus = fundingBearish ? "🔴 롱과열 (숏유리)" : fundingBullish ? "🟢 숏과열 (롱유리)" : "⚪ 중립"
     fundingColor = fundingBearish ? color.red : fundingBullish ? color.green : color.gray
-    table.cell(infoTable, 1, 22, fundingStatus, text_color=fundingColor, text_size=size.small)
+    table.cell(infoTable, 1, 25, fundingStatus, text_color=fundingColor, text_size=size.small)
 
     // ═══════════════════════════════════════
     // 🎯 최종 신호
     // ═══════════════════════════════════════
-    table.cell(infoTable, 0, 23, "━━━━━━━━━━", text_color=color.gray, text_size=size.small)
-    table.cell(infoTable, 1, 23, "━━━━━━━━━━", text_color=color.gray, text_size=size.small)
+    table.cell(infoTable, 0, 26, "━━━━━━━━━━", text_color=color.gray, text_size=size.small)
+    table.cell(infoTable, 1, 26, "━━━━━━━━━━", text_color=color.gray, text_size=size.small)
 
-    table.cell(infoTable, 0, 24, "🎯 최종신호", text_color=color.white, text_size=size.small,
+    table.cell(infoTable, 0, 27, "🎯 최종신호", text_color=color.white, text_size=size.small,
               bgcolor=color.new(color.gray, 20))
     string finalText = longSignal_final ? "🚀 LONG 진입" : (shortSignal_final and tradeMode == "선물") ? "🔻 SHORT 진입" : whaleExitSignal ? "⚠️ EXIT 경고" : "⏸️ 대기중"
     finalColor = longSignal_final ? color.green : (shortSignal_final and tradeMode == "선물") ? color.red : whaleExitSignal ? color.orange : color.gray
-    table.cell(infoTable, 1, 24, finalText, text_color=finalColor, text_size=size.small,
+    table.cell(infoTable, 1, 27, finalText, text_color=finalColor, text_size=size.small,
               bgcolor=color.new(finalColor, 80))
 
 // ============================================
@@ -977,7 +1477,7 @@ if longSignal_final
           "TP2: $" + str.tostring(tp2Price, "#.##") + " (+" + str.tostring(tpPct2, "#.#") + "%)\n" +
           "SL: $" + str.tostring(slPrice, "#.##") + " (-" + str.tostring(slPct, "#.#") + "%)\n" +
           "━━━━━━━━━━━━━━━\n" +
-          "레버리지: " + str.tostring(leverageInput) + "x | 점수: " + str.tostring(totalScore, "#.#") + "/28\n" +
+          "레버리지: " + str.tostring(leverageInput) + "x | 점수: " + str.tostring(totalScore, "#.#") + "/44\n" +
           (isInstitution ? "🐳 기관 감지!" : isWhale ? "🐋 고래 감지!" : "") +
           "\n\n" +
           '{"version":"27","market":"' + syminfo.basecurrency + '-USDT","mode":"' + tradeMode + '","signal":"LONG",' +
@@ -1007,7 +1507,7 @@ if shortSignal_final and tradeMode == "선물"
           "TP2: $" + str.tostring(tp2Price, "#.##") + " (-" + str.tostring(tpPct2, "#.#") + "%)\n" +
           "SL: $" + str.tostring(slPrice, "#.##") + " (+" + str.tostring(slPct, "#.#") + "%)\n" +
           "━━━━━━━━━━━━━━━\n" +
-          "레버리지: " + str.tostring(leverageInput) + "x | 점수: " + str.tostring(totalScoreShort, "#.#") + "/28\n" +
+          "레버리지: " + str.tostring(leverageInput) + "x | 점수: " + str.tostring(totalScoreShort, "#.#") + "/44\n" +
           (institutionSelling ? "🐳 기관 매도!" : whaleSelling ? "🐋 고래 매도!" : "") +
           "\n\n" +
           '{"version":"27","market":"' + syminfo.basecurrency + '-USDT","mode":"선물","signal":"SHORT",' +

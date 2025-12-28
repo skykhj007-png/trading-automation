@@ -143,8 +143,8 @@ var CONFIG = {
 // Bitget API 설정
 // ============================================
 var BITGET_CONFIG = {
-  API_KEY: 'bg_04dc69700de7130fc590be399eb96367',
-  SECRET_KEY: '5c9b0485e696ca643f84b934d0b199bbb132f78893eacb8a467a620cb8b6a340',
+  API_KEY: 'bg_a8227760e87a735063f67001787d4189',
+  SECRET_KEY: 'e72e1bc277e217c881769c83e18ab7deaaf9c1f95920d4ee77c8b468bed4f5a0',
   PASSPHRASE: 'ajdcjddl12',
   BASE_URL: 'https://api.bitget.com'
 };
@@ -2279,35 +2279,149 @@ function forceClosePosition() {
 // ============================================
 
 /**
- * 마켓별 현재 가격 조회 (Binance API)
+ * 마켓별 현재 가격 조회 (Bitget 기본 - 우리가 쓰는 거래소)
  */
 function getPriceByMarket(market) {
+  // 1차: Bitget API (우리 거래소)
+  var price = getPriceFromBitget(market);
+  if (price) return price;
+
+  // 2차: Bybit API 백업
+  price = getPriceFromBybit(market);
+  if (price) return price;
+
+  // 3차: OKX API 백업
+  price = getPriceFromOKX(market);
+  if (price) return price;
+
+  Logger.log('[' + market + '] 모든 API 실패');
+  return null;
+}
+
+/**
+ * Bitget API (기본 - 우리 거래소, 인증 불필요)
+ */
+function getPriceFromBitget(market) {
   try {
-    var symbol = SUPPORTED_MARKETS[market] || 'BTCUSDT';
-    var url = 'https://api.binance.com/api/v3/ticker/price?symbol=' + symbol;
+    var symbols = {
+      'BTC-USDT': 'BTCUSDT',
+      'ETH-USDT': 'ETHUSDT',
+      'SOL-USDT': 'SOLUSDT',
+      'XRP-USDT': 'XRPUSDT',
+      'DOGE-USDT': 'DOGEUSDT',
+      'BTCUSDT': 'BTCUSDT',
+      'ETHUSDT': 'ETHUSDT',
+      'SOLUSDT': 'SOLUSDT',
+      'XRPUSDT': 'XRPUSDT',
+      'DOGEUSDT': 'DOGEUSDT'
+    };
+
+    var symbol = symbols[market] || 'BTCUSDT';
+    // Bitget 선물 가격 API (인증 불필요)
+    var url = 'https://api.bitget.com/api/v2/mix/market/ticker?productType=USDT-FUTURES&symbol=' + symbol;
     var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
     var responseCode = response.getResponseCode();
-    var responseText = response.getContentText();
 
     if (responseCode !== 200) {
-      Logger.log('[' + market + '] API 응답 코드: ' + responseCode);
-      Logger.log('[' + market + '] API 응답: ' + responseText);
-
-      // Binance 실패시 CoinGecko 백업 시도
-      return getPriceFromCoinGecko(market);
+      Logger.log('[' + market + '] Bitget 응답코드: ' + responseCode);
+      return null;
     }
 
-    var data = JSON.parse(responseText);
-    return parseFloat(data.price);
+    var data = JSON.parse(response.getContentText());
+    if (data.code === '00000' && data.data && data.data.lastPr) {
+      var price = parseFloat(data.data.lastPr);
+      Logger.log('[' + market + '] Bitget 현재가: $' + price.toLocaleString());
+      return price;
+    }
+    return null;
   } catch (error) {
-    Logger.log('[' + market + '] 가격 조회 실패: ' + error.toString());
-    // Binance 실패시 CoinGecko 백업 시도
-    return getPriceFromCoinGecko(market);
+    Logger.log('[' + market + '] Bitget 실패: ' + error.toString());
+    return null;
   }
 }
 
 /**
- * CoinGecko API 백업 (Binance 실패시)
+ * Bybit API (기본 - 한국 접속 가능)
+ */
+function getPriceFromBybit(market) {
+  try {
+    var symbols = {
+      'BTC-USDT': 'BTCUSDT',
+      'ETH-USDT': 'ETHUSDT',
+      'SOL-USDT': 'SOLUSDT',
+      'XRP-USDT': 'XRPUSDT',
+      'DOGE-USDT': 'DOGEUSDT',
+      'BTCUSDT': 'BTCUSDT',
+      'ETHUSDT': 'ETHUSDT',
+      'SOLUSDT': 'SOLUSDT',
+      'XRPUSDT': 'XRPUSDT',
+      'DOGEUSDT': 'DOGEUSDT'
+    };
+
+    var symbol = symbols[market] || 'BTCUSDT';
+    var url = 'https://api.bybit.com/v5/market/tickers?category=spot&symbol=' + symbol;
+    var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    var responseCode = response.getResponseCode();
+
+    if (responseCode !== 200) {
+      Logger.log('[' + market + '] Bybit 응답코드: ' + responseCode);
+      return null;
+    }
+
+    var data = JSON.parse(response.getContentText());
+    if (data.retCode === 0 && data.result && data.result.list && data.result.list.length > 0) {
+      var price = parseFloat(data.result.list[0].lastPrice);
+      Logger.log('[' + market + '] 현재가: $' + price.toLocaleString());
+      return price;
+    }
+    return null;
+  } catch (error) {
+    Logger.log('[' + market + '] Bybit 실패: ' + error.toString());
+    return null;
+  }
+}
+
+/**
+ * OKX API 백업
+ */
+function getPriceFromOKX(market) {
+  try {
+    var symbols = {
+      'BTC-USDT': 'BTC-USDT',
+      'ETH-USDT': 'ETH-USDT',
+      'SOL-USDT': 'SOL-USDT',
+      'XRP-USDT': 'XRP-USDT',
+      'DOGE-USDT': 'DOGE-USDT',
+      'BTCUSDT': 'BTC-USDT',
+      'ETHUSDT': 'ETH-USDT',
+      'SOLUSDT': 'SOL-USDT',
+      'XRPUSDT': 'XRP-USDT',
+      'DOGEUSDT': 'DOGE-USDT'
+    };
+
+    var symbol = symbols[market] || 'BTC-USDT';
+    var url = 'https://www.okx.com/api/v5/market/ticker?instId=' + symbol;
+    var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    var responseCode = response.getResponseCode();
+
+    if (responseCode !== 200) {
+      return null;
+    }
+
+    var data = JSON.parse(response.getContentText());
+    if (data.code === '0' && data.data && data.data.length > 0) {
+      var price = parseFloat(data.data[0].last);
+      Logger.log('[' + market + '] OKX 현재가: $' + price.toLocaleString());
+      return price;
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * CoinGecko API 백업
  */
 function getPriceFromCoinGecko(market) {
   try {
@@ -2316,21 +2430,27 @@ function getPriceFromCoinGecko(market) {
       'ETH-USDT': 'ethereum',
       'SOL-USDT': 'solana',
       'XRP-USDT': 'ripple',
-      'DOGE-USDT': 'dogecoin'
+      'DOGE-USDT': 'dogecoin',
+      'BTCUSDT': 'bitcoin',
+      'ETHUSDT': 'ethereum',
+      'SOLUSDT': 'solana',
+      'XRPUSDT': 'ripple',
+      'DOGEUSDT': 'dogecoin'
     };
 
     var coinId = coinIds[market] || 'bitcoin';
     var url = 'https://api.coingecko.com/api/v3/simple/price?ids=' + coinId + '&vs_currencies=usd';
     var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    var responseCode = response.getResponseCode();
+
+    if (responseCode !== 200) {
+      return null;
+    }
+
     var data = JSON.parse(response.getContentText());
     var price = data[coinId] ? data[coinId].usd : null;
-
-    if (price) {
-      Logger.log('[' + market + '] CoinGecko 가격: $' + price);
-    }
     return price;
   } catch (error) {
-    Logger.log('[' + market + '] CoinGecko도 실패: ' + error.toString());
     return null;
   }
 }
@@ -4067,4 +4187,55 @@ function testTelegramNotification() {
 
   sendTelegramMessage(chatId, '🤖 <b>테스트 알림</b>\n\n클로드27 트레이딩 봇이 정상 작동중입니다!\n\n/도움 을 입력해보세요.');
   Logger.log('✅ 테스트 메시지 전송됨');
+}
+
+// ============================================
+// 포지션 진단 함수들
+// ============================================
+
+/**
+ * 포지션 진단 - USDT-M 및 COIN-M 선물 확인
+ */
+function 포지션_진단() {
+  Logger.log('=== 포지션 진단 시작 ===');
+
+  // USDT-M 선물
+  var endpoint1 = '/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT';
+  var result1 = callBitgetAPI('GET', endpoint1, null);
+  Logger.log('USDT-M 선물: ' + JSON.stringify(result1));
+
+  // COIN-M 선물 (혹시 이쪽인지)
+  var endpoint2 = '/api/v2/mix/position/all-position?productType=COIN-FUTURES&marginCoin=BTC';
+  var result2 = callBitgetAPI('GET', endpoint2, null);
+  Logger.log('COIN-M 선물: ' + JSON.stringify(result2));
+
+  Logger.log('=== 진단 완료 ===');
+}
+
+/**
+ * 포지션 API 테스트 - USDT-FUTURES 상세 확인
+ */
+function 포지션_API_테스트() {
+  var endpoint = '/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT';
+
+  try {
+    var result = callBitgetAPI('GET', endpoint, null);
+    Logger.log('API 응답 코드: ' + result.code);
+    Logger.log('API 메시지: ' + result.msg);
+    Logger.log('전체 응답: ' + JSON.stringify(result));
+
+    // data가 있으면 상세 출력
+    if (result.data && result.data.length > 0) {
+      Logger.log('');
+      Logger.log('=== 포지션 상세 ===');
+      for (var i = 0; i < result.data.length; i++) {
+        var pos = result.data[i];
+        Logger.log('포지션 ' + (i+1) + ': ' + pos.symbol + ' / ' + pos.holdSide + ' / 수량: ' + pos.total);
+      }
+    } else {
+      Logger.log('현재 열린 포지션 없음');
+    }
+  } catch (e) {
+    Logger.log('오류: ' + e.toString());
+  }
 }

@@ -17,7 +17,7 @@
 // 설정 (Configuration)
 // ============================================
 
-const CONFIG = {
+const SIGNAL_ONLY_CONFIG = {
   // 거래 설정 (참고용)
   TRADING: {
     MARKET: 'KRW-BTC',
@@ -120,8 +120,8 @@ function processSignal(data) {
   Logger.log(`신호 강도: ${totalScore}`);
 
   // 신호 강도 검증 (선택적)
-  if (totalScore > 0 && totalScore < CONFIG.TRADING.MIN_SIGNAL_STRENGTH) {
-    Logger.log(`⚠️ 신호 강도 부족: ${totalScore}/${CONFIG.TRADING.MIN_SIGNAL_STRENGTH}`);
+  if (totalScore > 0 && totalScore < SIGNAL_ONLY_CONFIG.TRADING.MIN_SIGNAL_STRENGTH) {
+    Logger.log(`⚠️ 신호 강도 부족: ${totalScore}/${SIGNAL_ONLY_CONFIG.TRADING.MIN_SIGNAL_STRENGTH}`);
 
     // 약한 신호도 기록은 하되, 비고에 표시
     data.remark = '⚠️ 신호 강도 부족';
@@ -171,7 +171,7 @@ function logSignalToSheet(data, entryPrice, tp1Price, tp2Price, slPrice) {
     const row = [
       Utilities.formatDate(now, 'Asia/Seoul', 'yyyy-MM-dd'),  // 날짜
       Utilities.formatDate(now, 'Asia/Seoul', 'HH:mm:ss'),    // 시간
-      data.market || CONFIG.TRADING.MARKET,                    // 마켓
+      data.market || SIGNAL_ONLY_CONFIG.TRADING.MARKET,                    // 마켓
       data.signal,                                             // 신호 (LONG/SHORT)
       entryPrice,                                              // 진입가
       tp1Price || '-',                                         // TP1
@@ -268,7 +268,7 @@ function createSignalSheet(ss) {
  * 신호 알림 전송
  */
 function sendSignalNotification(data, entryPrice, tp1Price, tp2Price, slPrice) {
-  if (!CONFIG.NOTIFICATION.ENABLED) return;
+  if (!SIGNAL_ONLY_CONFIG.NOTIFICATION.ENABLED) return;
 
   const signal = data.signal;
   const emoji = signal === 'LONG' ? '🚀' : '🔻';
@@ -279,7 +279,7 @@ function sendSignalNotification(data, entryPrice, tp1Price, tp2Price, slPrice) {
   const slPct = ((slPrice - entryPrice) / entryPrice * 100).toFixed(2);
 
   const message = `${emoji} ${signal} 신호 발생!\n\n` +
-                  `마켓: ${data.market || CONFIG.TRADING.MARKET}\n` +
+                  `마켓: ${data.market || SIGNAL_ONLY_CONFIG.TRADING.MARKET}\n` +
                   `진입가: ${entryPrice.toLocaleString()}\n\n` +
                   `🎯 목표가:\n` +
                   `  TP1: ${tp1Price.toLocaleString()} (${tp1Pct}%)\n` +
@@ -292,11 +292,11 @@ function sendSignalNotification(data, entryPrice, tp1Price, tp2Price, slPrice) {
                   `⚠️ 수동으로 진입하세요!`;
 
   // 이메일 알림
-  if (CONFIG.NOTIFICATION.EMAIL) {
+  if (SIGNAL_ONLY_CONFIG.NOTIFICATION.EMAIL) {
     try {
       MailApp.sendEmail({
-        to: CONFIG.NOTIFICATION.EMAIL,
-        subject: `[Trading Signal] ${emoji} ${signal} - ${data.market || CONFIG.TRADING.MARKET}`,
+        to: SIGNAL_ONLY_CONFIG.NOTIFICATION.EMAIL,
+        subject: `[Trading Signal] ${emoji} ${signal} - ${data.market || SIGNAL_ONLY_CONFIG.TRADING.MARKET}`,
         body: message
       });
       Logger.log('✅ 이메일 알림 전송 완료');
@@ -306,7 +306,7 @@ function sendSignalNotification(data, entryPrice, tp1Price, tp2Price, slPrice) {
   }
 
   // 텔레그램 알림
-  if (CONFIG.NOTIFICATION.TELEGRAM_BOT_TOKEN && CONFIG.NOTIFICATION.TELEGRAM_CHAT_ID) {
+  if (SIGNAL_ONLY_CONFIG.NOTIFICATION.TELEGRAM_BOT_TOKEN && SIGNAL_ONLY_CONFIG.NOTIFICATION.TELEGRAM_CHAT_ID) {
     try {
       sendTelegramMessage(message);
       Logger.log('✅ 텔레그램 알림 전송 완료');
@@ -320,10 +320,10 @@ function sendSignalNotification(data, entryPrice, tp1Price, tp2Price, slPrice) {
  * 텔레그램 메시지 전송
  */
 function sendTelegramMessage(message) {
-  const url = `https://api.telegram.org/bot${CONFIG.NOTIFICATION.TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const url = `https://api.telegram.org/bot${SIGNAL_ONLY_CONFIG.NOTIFICATION.TELEGRAM_BOT_TOKEN}/sendMessage`;
 
   const payload = {
-    chat_id: CONFIG.NOTIFICATION.TELEGRAM_CHAT_ID,
+    chat_id: SIGNAL_ONLY_CONFIG.NOTIFICATION.TELEGRAM_CHAT_ID,
     text: message,
     parse_mode: 'HTML'
   };
