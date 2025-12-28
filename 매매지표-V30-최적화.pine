@@ -895,7 +895,7 @@ if barstate.islast
     table.cell(infoTable, 1, 18, shortStatus, text_color=shortStatusColor, text_size=size.small)
 
 // ============================================
-// Webhook 알림
+// Webhook 알림 (보기 좋은 형식)
 // ============================================
 float longTp1 = close * (1 + tpPct1/100)
 float longTp2 = close * (1 + tpPct2/100)
@@ -905,9 +905,26 @@ float shortTp2 = close * (1 - tpPct2 * 0.9/100)
 float shortSl = close * (1 + slPct * 0.7/100)
 
 if longSignal_final
-    string lJson = '{"version":"30","market":"' + syminfo.basecurrency + '-USDT","mode":"' + tradeMode + '","signal":"LONG","leverage":"' + str.tostring(leverageInput) + '","entry":"' + str.tostring(close, "#.##") + '","score":"' + str.tostring(totalScore, "#.#") + '","tp1":"' + str.tostring(longTp1, "#.##") + '","tp2":"' + str.tostring(longTp2, "#.##") + '","sl":"' + str.tostring(longSl, "#.##") + '"}'
-    alert(lJson, freq=alert.freq_once_per_bar)
+    string alertMsg = "🟢 LONG 시그널\n" +
+         "━━━━━━━━━━━━━━\n" +
+         "📊 " + syminfo.basecurrency + "-USDT | " + tradeMode + " " + str.tostring(leverageInput) + "x\n" +
+         "💰 진입가: $" + str.tostring(close, "#.##") + "\n" +
+         "🎯 TP1: $" + str.tostring(longTp1, "#.##") + " (+" + str.tostring(tpPct1, "#.##") + "%)\n" +
+         "🎯 TP2: $" + str.tostring(longTp2, "#.##") + " (+" + str.tostring(tpPct2, "#.##") + "%)\n" +
+         "🛑 SL: $" + str.tostring(longSl, "#.##") + " (-" + str.tostring(slPct, "#.##") + "%)\n" +
+         "⭐ 점수: " + str.tostring(totalScore, "#.#") + "/28"
+    alert(alertMsg, freq=alert.freq_once_per_bar)
 
 if shortSignal_final
-    string sJson = '{"version":"30","market":"' + syminfo.basecurrency + '-USDT","mode":"' + tradeMode + '","signal":"SHORT","leverage":"' + str.tostring(leverageInput) + '","entry":"' + str.tostring(close, "#.##") + '","score":"' + str.tostring(totalScoreShort, "#.#") + '","tp1":"' + str.tostring(shortTp1, "#.##") + '","tp2":"' + str.tostring(shortTp2, "#.##") + '","sl":"' + str.tostring(shortSl, "#.##") + '"}'
-    alert(sJson, freq=alert.freq_once_per_bar)
+    float sTP1Pct = tpPct1 * 0.85
+    float sTP2Pct = tpPct2 * 0.9
+    float sSLPct = slPct * 0.7
+    string alertMsg = "🔴 SHORT 시그널\n" +
+         "━━━━━━━━━━━━━━\n" +
+         "📊 " + syminfo.basecurrency + "-USDT | " + tradeMode + " " + str.tostring(leverageInput) + "x\n" +
+         "💰 진입가: $" + str.tostring(close, "#.##") + "\n" +
+         "🎯 TP1: $" + str.tostring(shortTp1, "#.##") + " (-" + str.tostring(sTP1Pct, "#.##") + "%)\n" +
+         "🎯 TP2: $" + str.tostring(shortTp2, "#.##") + " (-" + str.tostring(sTP2Pct, "#.##") + "%)\n" +
+         "🛑 SL: $" + str.tostring(shortSl, "#.##") + " (+" + str.tostring(sSLPct, "#.##") + "%)\n" +
+         "⭐ 점수: " + str.tostring(totalScoreShort, "#.#") + "/28"
+    alert(alertMsg, freq=alert.freq_once_per_bar)
