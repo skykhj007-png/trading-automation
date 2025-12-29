@@ -936,3 +936,29 @@ if shortSignal_final
          "\n" +
          "SL: $" + str.tostring(shortSl, "#.##") + " (+" + str.tostring(sSLPct, "#.#") + "%)"
     alert(alertMsg, freq=alert.freq_once_per_bar)
+
+// ============================================
+// 주기적 AI 리포트용 데이터 출력
+// ============================================
+string trendStr = strongUptrend ? "STRONG_UP" : strongDowntrend ? "STRONG_DOWN" : isUptrend ? "UP" : isDowntrend ? "DOWN" : "NEUTRAL"
+float bbPosition = (close - bbLower) / (bbUpper - bbLower) * 100
+
+string reportData =
+     "REPORT|" +
+     "symbol:" + syminfo.ticker + "|" +
+     "price:" + str.tostring(close, "#.##") + "|" +
+     "rsi:" + str.tostring(rsi, "#.#") + "|" +
+     "macd:" + str.tostring(macdLine, "#.##") + "|" +
+     "macd_signal:" + str.tostring(signalLine, "#.##") + "|" +
+     "adx:" + str.tostring(adx, "#.#") + "|" +
+     "trend:" + trendStr + "|" +
+     "stochK:" + str.tostring(stochK, "#.#") + "|" +
+     "stochD:" + str.tostring(stochD, "#.#") + "|" +
+     "volume_ratio:" + str.tostring(volumeRatio, "#.##") + "|" +
+     "bb_position:" + str.tostring(bbPosition, "#.#") + "|" +
+     "ema9:" + str.tostring(ema9, "#.##") + "|" +
+     "ema21:" + str.tostring(ema21, "#.##") + "|" +
+     "ema50:" + str.tostring(ema50, "#.##") + "|" +
+     "ema200:" + str.tostring(ema200, "#.##") + "|" +
+     "score_long:" + str.tostring(totalScore, "#.#") + "|" +
+     "score_short:" + str.tostring(totalScoreShort, "#.#")
