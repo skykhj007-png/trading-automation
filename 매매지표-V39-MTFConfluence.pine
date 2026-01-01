@@ -55,9 +55,9 @@ pivotRight = input.int(2, title="피봇 우측 바", minval=1, maxval=10, group=
 showSMC = input.bool(true, title="SMC 기능 활성화", group="SMC 설정") and showVisuals
 showOrderBlocks = input.bool(true, title="Order Blocks 표시", group="SMC 설정") and not isMinimalMode
 showFVG = input.bool(true, title="Fair Value Gaps 표시", group="SMC 설정") and not isMinimalMode
-showBOS = input.bool(true, title="BOS/CHoCH 표시", group="SMC 설정") and not isMinimalMode
-showBOSBox = input.bool(true, title="BOS 박스 표시", group="SMC 설정") and not isMinimalMode
-showStructureLabels = input.bool(true, title="구조 라벨 (HH/HL/LH/LL)", group="SMC 설정") and not isMinimalMode
+showBOS = input.bool(true, title="BOS/CHoCH 표시", group="SMC 설정")  // 최소화 모드에서도 표시
+showBOSBox = input.bool(true, title="BOS 박스 표시", group="SMC 설정")  // 최소화 모드에서도 표시
+showStructureLabels = input.bool(true, title="구조 라벨 (HH/HL/LH/LL)", group="SMC 설정")  // 최소화 모드에서도 표시
 showSmartTrail = input.bool(true, title="Smart Trail 표시", group="SMC 설정")  // 최소화 모드에서도 표시
 showLiquidityLevels = input.bool(true, title="Liquidity Levels 표시", group="SMC 설정") and not isMinimalMode
 showEMAAngle = input.bool(true, title="EMA 각도 색상", group="SMC 설정")  // EMA 각도별 색상
