@@ -1,0 +1,322 @@
+//@version=5
+indicator("BOS/EMA Market Structure", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=200)
+
+// ============================================
+// BOS/EMA 시장 구조 분석 지표
+//
+// 핵심 기능:
+// 1. EMA 각도별 색상 (추세 방향 파악)
+// 2. BOS (Break of Structure) 박스 표시
+// 3. 시장 구조 HH/HL/LH/LL 표시
+// 4. CHOCH (추세 전환) 감지
+// ============================================
+
+// ============================================
+// 설정
+// ============================================
+
+// EMA 설정
+emaLength = input.int(14, title="EMA 길이", minval=1, maxval=100, group="EMA 설정")
+emaAngleThreshold = input.float(1.0, title="EMA 각도 임계값", minval=0.1, maxval=5.0, step=0.1, group="EMA 설정")
+showEMA = input.bool(true, title="EMA 표시", group="EMA 설정")
+
+// 구조 설정
+swingLength = input.int(5, title="스윙 탐색 길이", minval=2, maxval=20, group="구조 설정")
+showStructure = input.bool(true, title="구조 (HH/HL/LH/LL) 표시", group="구조 설정")
+showBOS = input.bool(true, title="BOS 박스 표시", group="구조 설정")
+showCHOCH = input.bool(true, title="CHOCH 라벨 표시", group="구조 설정")
+showTrendLines = input.bool(true, title="추세선 표시", group="구조 설정")
+
+// 색상 설정
+bullColor = input.color(color.new(color.teal, 30), title="Bullish BOS 색상", group="색상")
+bearColor = input.color(color.new(color.fuchsia, 30), title="Bearish BOS 색상", group="색상")
+
+// ============================================
+// EMA 계산 및 각도 분석
+// ============================================
+
+ema = ta.ema(close, emaLength)
+emaPrev = ema[1]
+
+// EMA 각도 계산 (가격 변화율 기반)
+priceRange = ta.highest(high, 50) - ta.lowest(low, 50)
+emaChange = (ema - emaPrev) / priceRange * 100
+emaAngle = ta.sma(emaChange, 3)  // 스무딩
+
+// EMA 색상 결정
+// 초록: 강한 상승 (각도 > threshold)
+// 노랑: 약한 상승 (0 < 각도 < threshold)
+// 주황: 횡보 (각도 ≈ 0)
+// 빨강: 하락 (각도 < 0)
+color emaColor = emaAngle > emaAngleThreshold ? color.lime :
+                 emaAngle > 0 ? color.yellow :
+                 emaAngle > -emaAngleThreshold ? color.orange :
+                 color.red
+
+// EMA 추세 상태
+bool emaUptrend = emaAngle > 0
+bool emaDowntrend = emaAngle < 0
+bool emaStrongUp = emaAngle > emaAngleThreshold
+bool emaStrongDown = emaAngle < -emaAngleThreshold
+
+// EMA 플롯
+plot(showEMA ? ema : na, color=emaColor, linewidth=3, title="EMA")
+
+// ============================================
+// 스윙 고점/저점 감지
+// ============================================
+
+// 피봇 하이/로우 감지
+pivotHigh = ta.pivothigh(high, swingLength, swingLength)
+pivotLow = ta.pivotlow(low, swingLength, swingLength)
+
+// 스윙 포인트 저장
+var float lastSwingHigh = na
+var float lastSwingLow = na
+var int lastSwingHighBar = na
+var int lastSwingLowBar = na
+
+var float prevSwingHigh = na
+var float prevSwingLow = na
+var int prevSwingHighBar = na
+var int prevSwingLowBar = na
+
+// 스윙 하이 업데이트
+if not na(pivotHigh)
+    prevSwingHigh := lastSwingHigh
+    prevSwingHighBar := lastSwingHighBar
+    lastSwingHigh := pivotHigh
+    lastSwingHighBar := bar_index - swingLength
+
+// 스윙 로우 업데이트
+if not na(pivotLow)
+    prevSwingLow := lastSwingLow
+    prevSwingLowBar := lastSwingLowBar
+    lastSwingLow := pivotLow
+    lastSwingLowBar := bar_index - swingLength
+
+// ============================================
+// 시장 구조 분석 (HH, HL, LH, LL)
+// ============================================
+
+var string currentTrend = "none"
+var string lastStructure = "none"
+
+// Higher High / Lower High 감지
+bool isHigherHigh = not na(pivotHigh) and not na(prevSwingHigh) and pivotHigh > prevSwingHigh
+bool isLowerHigh = not na(pivotHigh) and not na(prevSwingHigh) and pivotHigh < prevSwingHigh
+
+// Higher Low / Lower Low 감지
+bool isHigherLow = not na(pivotLow) and not na(prevSwingLow) and pivotLow > prevSwingLow
+bool isLowerLow = not na(pivotLow) and not na(prevSwingLow) and pivotLow < prevSwingLow
+
+// 구조 라벨 표시
+if showStructure
+    if isHigherHigh
+        label.new(bar_index - swingLength, pivotHigh, "HH",
+                 style=label.style_label_down, color=color.new(color.green, 50),
+                 textcolor=color.white, size=size.tiny)
+        lastStructure := "HH"
+        if currentTrend != "up"
+            currentTrend := "up"
+
+    if isLowerHigh
+        label.new(bar_index - swingLength, pivotHigh, "LH",
+                 style=label.style_label_down, color=color.new(color.red, 50),
+                 textcolor=color.white, size=size.tiny)
+        lastStructure := "LH"
+
+    if isHigherLow
+        label.new(bar_index - swingLength, pivotLow, "HL",
+                 style=label.style_label_up, color=color.new(color.green, 50),
+                 textcolor=color.white, size=size.tiny)
+        lastStructure := "HL"
+
+    if isLowerLow
+        label.new(bar_index - swingLength, pivotLow, "LL",
+                 style=label.style_label_up, color=color.new(color.red, 50),
+                 textcolor=color.white, size=size.tiny)
+        lastStructure := "LL"
+        if currentTrend != "down"
+            currentTrend := "down"
+
+// ============================================
+// CHOCH (Change of Character) 감지
+// ============================================
+
+var bool wasUptrend = false
+var bool wasDowntrend = false
+
+// 상승 추세 중 LH 발생 = CHOCH 가능성
+bool chochDown = wasUptrend and isLowerHigh
+// 하락 추세 중 HL 발생 = CHOCH 가능성
+bool chochUp = wasDowntrend and isHigherLow
+
+if showCHOCH
+    if chochDown
+        label.new(bar_index - swingLength, pivotHigh * 1.001, "CHoCH",
+                 style=label.style_label_down, color=color.red,
+                 textcolor=color.white, size=size.small)
+
+    if chochUp
+        label.new(bar_index - swingLength, pivotLow * 0.999, "CHoCH",
+                 style=label.style_label_up, color=color.green,
+                 textcolor=color.white, size=size.small)
+
+// 추세 상태 업데이트
+if isHigherHigh and isHigherLow[1]
+    wasUptrend := true
+    wasDowntrend := false
+
+if isLowerLow and isLowerHigh[1]
+    wasDowntrend := true
+    wasUptrend := false
+
+// ============================================
+// BOS (Break of Structure) 감지 및 박스 표시
+// ============================================
+
+// BOS 조건
+// Bullish BOS: 상승 추세(초록 EMA) 중 이전 고점 돌파
+// Bearish BOS: 하락 추세(빨강 EMA) 중 이전 저점 이탈
+
+var float bosHighLevel = na
+var float bosLowLevel = na
+var int bosHighBar = na
+var int bosLowBar = na
+
+// Bullish BOS 감지 (이전 스윙 하이 돌파)
+bool bullishBOS = emaUptrend and not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh
+
+// Bearish BOS 감지 (이전 스윙 로우 이탈)
+bool bearishBOS = emaDowntrend and not na(lastSwingLow) and close < lastSwingLow and close[1] >= lastSwingLow
+
+// BOS 박스 그리기
+if showBOS and bullishBOS
+    // Bullish BOS 박스 (청록색)
+    bosHighLevel := lastSwingHigh
+    bosLowLevel := lastSwingLow
+    bosHighBar := bar_index
+
+    box.new(lastSwingHighBar, lastSwingHigh, bar_index + 10, lastSwingLow,
+           border_color=bullColor, bgcolor=color.new(bullColor, 80),
+           border_width=2, text="BOS+", text_color=color.teal, text_size=size.small)
+
+    // BOS 라벨
+    label.new(bar_index, high * 1.002, "BOS",
+             style=label.style_label_down, color=color.teal,
+             textcolor=color.white, size=size.small)
+
+if showBOS and bearishBOS
+    // Bearish BOS 박스 (분홍색)
+    bosHighLevel := lastSwingHigh
+    bosLowLevel := lastSwingLow
+    bosLowBar := bar_index
+
+    box.new(lastSwingLowBar, lastSwingHigh, bar_index + 10, lastSwingLow,
+           border_color=bearColor, bgcolor=color.new(bearColor, 80),
+           border_width=2, text="BOS-", text_color=color.fuchsia, text_size=size.small)
+
+    // BOS 라벨
+    label.new(bar_index, low * 0.998, "BOS",
+             style=label.style_label_up, color=color.fuchsia,
+             textcolor=color.white, size=size.small)
+
+// ============================================
+// 추세선 그리기 (스윙 포인트 연결)
+// ============================================
+
+var line trendLine = na
+
+if showTrendLines
+    // 상승 추세선 (스윙 로우 연결)
+    if isHigherLow and not na(prevSwingLowBar) and not na(lastSwingLowBar)
+        line.new(prevSwingLowBar, prevSwingLow, lastSwingLowBar, lastSwingLow,
+                color=color.lime, width=2, extend=extend.right, style=line.style_dashed)
+
+    // 하락 추세선 (스윙 하이 연결)
+    if isLowerHigh and not na(prevSwingHighBar) and not na(lastSwingHighBar)
+        line.new(prevSwingHighBar, prevSwingHigh, lastSwingHighBar, lastSwingHigh,
+                color=color.red, width=2, extend=extend.right, style=line.style_dashed)
+
+// ============================================
+// 기준선 표시 (BOS 매매용)
+// ============================================
+
+var line bullishBaseline = na
+var line bearishBaseline = na
+
+// Bullish BOS 기준선 (이전 저점 → BOS 캔들 저점)
+if bullishBOS and not na(prevSwingLow)
+    if not na(bullishBaseline)
+        line.delete(bullishBaseline)
+    bullishBaseline := line.new(prevSwingLowBar, prevSwingLow, bar_index, low,
+                               color=color.teal, width=2, extend=extend.right)
+
+// Bearish BOS 기준선 (이전 고점 → BOS 캔들 고점)
+if bearishBOS and not na(prevSwingHigh)
+    if not na(bearishBaseline)
+        line.delete(bearishBaseline)
+    bearishBaseline := line.new(prevSwingHighBar, prevSwingHigh, bar_index, high,
+                               color=color.fuchsia, width=2, extend=extend.right)
+
+// ============================================
+// 정보 테이블
+// ============================================
+
+var table infoTable = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 30), border_width=1)
+
+if barstate.islast
+    // EMA 상태
+    string emaStatus = emaStrongUp ? "강한 상승" : emaUptrend ? "상승" : emaStrongDown ? "강한 하락" : emaDowntrend ? "하락" : "횡보"
+    color emaStatusColor = emaStrongUp ? color.lime : emaUptrend ? color.yellow : emaStrongDown ? color.red : emaDowntrend ? color.orange : color.gray
+
+    // 추세 상태
+    string trendStatus = wasUptrend ? "상승 추세" : wasDowntrend ? "하락 추세" : "없음"
+    color trendColor = wasUptrend ? color.green : wasDowntrend ? color.red : color.gray
+
+    table.cell(infoTable, 0, 0, "BOS/EMA", text_color=color.white, bgcolor=color.blue, text_size=size.small)
+    table.cell(infoTable, 1, 0, "Structure", text_color=color.white, bgcolor=color.blue, text_size=size.small)
+
+    table.cell(infoTable, 0, 1, "EMA", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 1, emaStatus, text_color=emaStatusColor, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 2, "추세", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 2, trendStatus, text_color=trendColor, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 3, "마지막", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 3, lastStructure, text_color=color.yellow, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 4, "스윙H", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 4, str.tostring(lastSwingHigh, "#.##"), text_color=color.gray, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 5, "스윙L", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 5, str.tostring(lastSwingLow, "#.##"), text_color=color.gray, text_size=size.tiny)
+
+// ============================================
+// 알림
+// ============================================
+
+alertcondition(bullishBOS, title="Bullish BOS", message="상승 구조 돌파 (Bullish BOS) 발생!")
+alertcondition(bearishBOS, title="Bearish BOS", message="하락 구조 돌파 (Bearish BOS) 발생!")
+alertcondition(chochUp, title="CHoCH Up", message="상승 추세 전환 가능성 (CHoCH)")
+alertcondition(chochDown, title="CHoCH Down", message="하락 추세 전환 가능성 (CHoCH)")
+
+// ============================================
+// 시그널 표시
+// ============================================
+
+// Bullish BOS 진입 시그널 (기준선 이탈 시)
+plotshape(bullishBOS, style=shape.triangleup, location=location.belowbar,
+         color=color.teal, size=size.small, title="Bullish BOS")
+
+// Bearish BOS 진입 시그널 (기준선 이탈 시)
+plotshape(bearishBOS, style=shape.triangledown, location=location.abovebar,
+         color=color.fuchsia, size=size.small, title="Bearish BOS")
+
+// ============================================
+// 면책 문구
+// ============================================
+
+// 본 지표는 참고용이며 투자권유가 아닙니다.
+// 모든 투자 결정과 손실 책임은 본인에게 있습니다.

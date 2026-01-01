@@ -1,16 +1,15 @@
 //@version=5
-indicator("V38 MTF Confluence Pro", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=100)
+indicator("V39 MTF Confluence Pro", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=200)
 
 // ============================================
-// V38 MTF Confluence Pro - 통합 분석 시스템
+// V39 MTF Confluence Pro - 통합 분석 시스템
 //
-// V37 + V38 통합 버전
+// V38 + BOS/EMA 구조 분석 통합 버전
 // - 멀티TF 분석 (5m/15m/1H/4H/D)
-// - 3일치 지지/저항
-// - 다이버전스 감지
-// - 볼린저밴드
+// - EMA 각도별 색상 (추세 강도)
+// - 시장 구조 (HH/HL/LH/LL)
+// - BOS 박스 + CHoCH 라벨
 // - 30점 점수 시스템
-// - 각 TF별 거래량 배수 표시
 // ============================================
 
 // ============================================
@@ -57,12 +56,17 @@ showSMC = input.bool(true, title="SMC 기능 활성화", group="SMC 설정") and
 showOrderBlocks = input.bool(true, title="Order Blocks 표시", group="SMC 설정") and not isMinimalMode
 showFVG = input.bool(true, title="Fair Value Gaps 표시", group="SMC 설정") and not isMinimalMode
 showBOS = input.bool(true, title="BOS/CHoCH 표시", group="SMC 설정") and not isMinimalMode
+showBOSBox = input.bool(true, title="BOS 박스 표시", group="SMC 설정") and not isMinimalMode
+showStructureLabels = input.bool(true, title="구조 라벨 (HH/HL/LH/LL)", group="SMC 설정") and not isMinimalMode
 showSmartTrail = input.bool(true, title="Smart Trail 표시", group="SMC 설정")  // 최소화 모드에서도 표시
 showLiquidityLevels = input.bool(true, title="Liquidity Levels 표시", group="SMC 설정") and not isMinimalMode
+showEMAAngle = input.bool(true, title="EMA 각도 색상", group="SMC 설정")  // EMA 각도별 색상
 
 obLookback = input.int(20, title="Order Block 탐색 범위", minval=5, maxval=100, group="SMC 설정")
 fvgMinSize = input.float(0.1, title="FVG 최소 크기 (%)", minval=0.01, maxval=1.0, step=0.01, group="SMC 설정")
 swingLength = input.int(10, title="Swing 탐색 길이", minval=3, maxval=50, group="SMC 설정")
+emaAngleLength = input.int(14, title="EMA 각도 길이", minval=5, maxval=50, group="SMC 설정")
+emaAngleThreshold = input.float(1.0, title="EMA 각도 임계값", minval=0.1, maxval=5.0, step=0.1, group="SMC 설정")
 
 // ============================================
 // 현재 TF 기본 지표
@@ -77,6 +81,26 @@ bool emaAlignedUp = ema9 > ema21 and ema21 > ema50
 bool emaAlignedDown = ema9 < ema21 and ema21 < ema50
 bool aboveEMA200 = close > ema200
 bool belowEMA200 = close < ema200
+
+// ============================================
+// EMA 각도 분석 (추세 강도)
+// ============================================
+emaAngle14 = ta.ema(close, emaAngleLength)
+emaAnglePrev = emaAngle14[1]
+priceRange = ta.highest(high, 50) - ta.lowest(low, 50)
+emaChange = (emaAngle14 - emaAnglePrev) / priceRange * 100
+emaAngleValue = ta.sma(emaChange, 3)
+
+// EMA 색상: 초록(강한상승) > 노랑(약한상승) > 주황(횡보) > 빨강(하락)
+color emaAngleColor = emaAngleValue > emaAngleThreshold ? color.lime :
+                      emaAngleValue > 0 ? color.yellow :
+                      emaAngleValue > -emaAngleThreshold ? color.orange :
+                      color.red
+
+bool emaStrongUp = emaAngleValue > emaAngleThreshold
+bool emaWeakUp = emaAngleValue > 0 and emaAngleValue <= emaAngleThreshold
+bool emaSideways = emaAngleValue <= 0 and emaAngleValue >= -emaAngleThreshold
+bool emaStrongDown = emaAngleValue < -emaAngleThreshold
 
 // 볼린저밴드
 bbLength = 20
@@ -161,16 +185,55 @@ var int lastSwingHighBar = na
 var int lastSwingLowBar = na
 var float prevSwingHigh = na
 var float prevSwingLow = na
+var int prevSwingHighBar = na
+var int prevSwingLowBar = na
+
+// 시장 구조 라벨용 변수
+var string lastStructureType = "none"
 
 if not na(swingHigh)
     prevSwingHigh := lastSwingHigh
+    prevSwingHighBar := lastSwingHighBar
     lastSwingHigh := swingHigh
     lastSwingHighBar := bar_index - swingLength
 
 if not na(swingLow)
     prevSwingLow := lastSwingLow
+    prevSwingLowBar := lastSwingLowBar
     lastSwingLow := swingLow
     lastSwingLowBar := bar_index - swingLength
+
+// --- 시장 구조 분석 (HH, HL, LH, LL) ---
+bool isHigherHigh = not na(swingHigh) and not na(prevSwingHigh) and swingHigh > prevSwingHigh
+bool isLowerHigh = not na(swingHigh) and not na(prevSwingHigh) and swingHigh < prevSwingHigh
+bool isHigherLow = not na(swingLow) and not na(prevSwingLow) and swingLow > prevSwingLow
+bool isLowerLow = not na(swingLow) and not na(prevSwingLow) and swingLow < prevSwingLow
+
+// 구조 라벨 표시
+if showSMC and showStructureLabels
+    if isHigherHigh
+        label.new(bar_index - swingLength, swingHigh, "HH",
+                 style=label.style_label_down, color=color.new(color.green, 40),
+                 textcolor=color.white, size=size.tiny)
+        lastStructureType := "HH"
+
+    if isLowerHigh
+        label.new(bar_index - swingLength, swingHigh, "LH",
+                 style=label.style_label_down, color=color.new(color.red, 40),
+                 textcolor=color.white, size=size.tiny)
+        lastStructureType := "LH"
+
+    if isHigherLow
+        label.new(bar_index - swingLength, swingLow, "HL",
+                 style=label.style_label_up, color=color.new(color.green, 40),
+                 textcolor=color.white, size=size.tiny)
+        lastStructureType := "HL"
+
+    if isLowerLow
+        label.new(bar_index - swingLength, swingLow, "LL",
+                 style=label.style_label_up, color=color.new(color.red, 40),
+                 textcolor=color.white, size=size.tiny)
+        lastStructureType := "LL"
 
 // --- BOS (Break of Structure) / CHoCH (Change of Character) ---
 var bool isBullishStructure = true
@@ -209,6 +272,31 @@ else
         bosDn := true
         bosLevel := lastSwingLow
         lastBosLow := lastSwingLow
+
+// --- BOS 박스 생성 ---
+var box[] bosBoxes = array.new_box(0)
+
+// Bullish BOS 박스 (청록색) - EMA 상승 중 + 고점 돌파
+if showSMC and showBOSBox and bosUp and emaAngleValue > 0
+    if array.size(bosBoxes) >= 10
+        box.delete(array.shift(bosBoxes))
+    // 이전 저점 ~ 현재 고점 박스
+    float boxTop = lastSwingHigh
+    float boxBot = not na(prevSwingLow) ? prevSwingLow : lastSwingLow
+    array.push(bosBoxes, box.new(lastSwingHighBar, boxTop, bar_index + 15, boxBot,
+               bgcolor=color.new(color.teal, 85), border_color=color.teal, border_width=2,
+               text="BOS+", text_color=color.teal, text_size=size.small))
+
+// Bearish BOS 박스 (분홍색) - EMA 하락 중 + 저점 이탈
+if showSMC and showBOSBox and bosDn and emaAngleValue < 0
+    if array.size(bosBoxes) >= 10
+        box.delete(array.shift(bosBoxes))
+    // 이전 고점 ~ 현재 저점 박스
+    float boxTop = not na(prevSwingHigh) ? prevSwingHigh : lastSwingHigh
+    float boxBot = lastSwingLow
+    array.push(bosBoxes, box.new(lastSwingLowBar, boxTop, bar_index + 15, boxBot,
+               bgcolor=color.new(color.fuchsia, 85), border_color=color.fuchsia, border_width=2,
+               text="BOS-", text_color=color.fuchsia, text_size=size.small))
 
 // --- Order Blocks 감지 ---
 var box[] bullishOBs = array.new_box(0)
@@ -579,6 +667,9 @@ plot(showEMA ? ema21 : na, color=color.orange, linewidth=2, title="EMA 21")
 plot(showEMA ? ema50 : na, color=color.blue, linewidth=1, title="EMA 50")
 plot(showEMA ? ema200 : na, color=color.purple, linewidth=1, title="EMA 200")
 
+// EMA 각도 색상 라인 (추세 강도 시각화)
+plot(showEMAAngle ? emaAngle14 : na, color=emaAngleColor, linewidth=3, title="EMA Angle")
+
 // 볼린저밴드
 plot(showBB ? bbUpper : na, color=color.new(color.gray, 50), linewidth=1, title="BB Upper")
 plot(showBB ? bbBasis : na, color=color.new(color.gray, 70), linewidth=1, title="BB Basis")
@@ -735,7 +826,7 @@ if showInfoTable
 
         // 헤더 + 모드 표시
         string modeText = tradeMode == "선물" ? "F" : tradeMode == "현물" ? "S" : "K"  // Futures/Spot/stocK
-        table.cell(infoTbl, 0, 0, "V38 [" + modeText + "]", text_color=color.white, bgcolor=color.blue, text_size=size.small)
+        table.cell(infoTbl, 0, 0, "V39 [" + modeText + "]", text_color=color.white, bgcolor=color.blue, text_size=size.small)
         table.cell(infoTbl, 1, 0, "추세", text_color=color.white, bgcolor=color.blue, text_size=size.small)
         table.cell(infoTbl, 2, 0, "EMA", text_color=color.white, bgcolor=color.blue, text_size=size.small)
         table.cell(infoTbl, 3, 0, "MACD", text_color=color.white, bgcolor=color.blue, text_size=size.small)
@@ -953,9 +1044,13 @@ if showMiniPanel and isMinimalMode and barstate.islast
     table.cell(miniTbl, 2, 0, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.lime : color.white, bgcolor=biasBg, text_size=size.normal)
     table.cell(miniTbl, 3, 0, currentGrade, text_color=longScore >= 19 ? color.yellow : color.white, bgcolor=biasBg, text_size=size.normal)
 
+    // EMA 각도 상태
+    string emaAngleStatus = emaStrongUp ? "▲▲" : emaWeakUp ? "▲" : emaSideways ? "—" : "▼"
+    color emaAngleStatusColor = emaStrongUp ? color.lime : emaWeakUp ? color.yellow : emaSideways ? color.orange : color.red
+
     // Row 1: 헤더
-    table.cell(miniTbl, 0, 1, "V38", text_color=color.white, bgcolor=color.blue, text_size=size.small)
-    table.cell(miniTbl, 1, 1, modeText, text_color=color.white, bgcolor=modeBgColor, text_size=size.small)
+    table.cell(miniTbl, 0, 1, "V39", text_color=color.white, bgcolor=color.blue, text_size=size.small)
+    table.cell(miniTbl, 1, 1, emaAngleStatus, text_color=emaAngleStatusColor, bgcolor=color.new(color.gray, 50), text_size=size.small)
     table.cell(miniTbl, 2, 1, timeframe.period, text_color=color.white, bgcolor=color.gray, text_size=size.small)
     table.cell(miniTbl, 3, 1, smartTrailUp ? "L" : "S", text_color=smartTrailUp ? color.lime : color.red, bgcolor=color.new(color.gray, 50), text_size=size.small)
 
