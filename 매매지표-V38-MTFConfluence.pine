@@ -925,7 +925,7 @@ if showInfoTable
 // ============================================
 
 if showMiniPanel and isMinimalMode and barstate.islast
-    var table miniTbl = table.new(position.top_right, 4, 5, bgcolor=color.new(color.black, 20), border_width=1)
+    var table miniTbl = table.new(position.top_right, 4, 6, bgcolor=color.new(color.black, 20), border_width=1)
 
     // 모드 표시
     string modeText = tradeMode == "선물" ? "F" : tradeMode == "현물" ? "S" : "K"
@@ -940,45 +940,53 @@ if showMiniPanel and isMinimalMode and barstate.islast
     string statusText = exitLongSignal ? "EXIT NOW" : trailFlipToShort ? "WARNING" : smartTrailUp ? "HOLD" : "WAIT"
     color statusColor = exitLongSignal ? color.red : trailFlipToShort ? color.orange : smartTrailUp ? color.lime : color.gray
 
-    // 헤더
-    table.cell(miniTbl, 0, 0, "V38", text_color=color.white, bgcolor=color.blue, text_size=size.small)
-    table.cell(miniTbl, 1, 0, modeText, text_color=color.white, bgcolor=modeBgColor, text_size=size.small)
-    table.cell(miniTbl, 2, 0, timeframe.period, text_color=color.white, bgcolor=color.gray, text_size=size.small)
-    table.cell(miniTbl, 3, 0, smartTrailUp ? "L" : "S", text_color=smartTrailUp ? color.lime : color.red, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    // LONG/SHORT 유리 판단
+    bool longFavorable = smartTrailUp and tf1h_uptrend and longScore >= 15
+    bool shortFavorable = not smartTrailUp and not tf1h_uptrend and pricePosition > 70
+    string biasIcon = longFavorable ? "▲ LONG" : shortFavorable ? "▼ SHORT" : "— WAIT"
+    color biasColor = longFavorable ? color.lime : shortFavorable ? color.red : color.gray
+    color biasBg = longFavorable ? color.new(color.green, 30) : shortFavorable ? color.new(color.red, 30) : color.new(color.gray, 70)
 
-    // 시그널
-    table.cell(miniTbl, 0, 1, "Signal", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 1, 1, sigText, text_color=sigColor, bgcolor=sigBg, text_size=size.normal)
-    table.cell(miniTbl, 2, 1, currentGrade, text_color=sigColor, bgcolor=sigBg, text_size=size.normal)
-    table.cell(miniTbl, 3, 1, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.green : color.gray, bgcolor=sigBg, text_size=size.tiny)
+    // Row 0: 방향 표시 (가장 눈에 띄게)
+    table.cell(miniTbl, 0, 0, biasIcon, text_color=biasColor, bgcolor=biasBg, text_size=size.large)
+    table.cell(miniTbl, 1, 0, "", text_color=biasColor, bgcolor=biasBg, text_size=size.large)
+    table.cell(miniTbl, 2, 0, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.lime : color.white, bgcolor=biasBg, text_size=size.normal)
+    table.cell(miniTbl, 3, 0, currentGrade, text_color=longScore >= 19 ? color.yellow : color.white, bgcolor=biasBg, text_size=size.normal)
 
-    // 추세
-    table.cell(miniTbl, 0, 2, "추세", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 1, 2, str.tostring(uptrendCount) + "/4", text_color=uptrendCount >= 3 ? color.green : color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 2, 2, tf1h_uptrend ? "1H:UP" : "1H:DN", text_color=tf1h_uptrend ? color.green : color.red, text_size=size.tiny)
-    table.cell(miniTbl, 3, 2, tf4h_uptrend ? "4H:UP" : "4H:DN", text_color=tf4h_uptrend ? color.green : color.red, text_size=size.tiny)
+    // Row 1: 헤더
+    table.cell(miniTbl, 0, 1, "V38", text_color=color.white, bgcolor=color.blue, text_size=size.small)
+    table.cell(miniTbl, 1, 1, modeText, text_color=color.white, bgcolor=modeBgColor, text_size=size.small)
+    table.cell(miniTbl, 2, 1, timeframe.period, text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 3, 1, smartTrailUp ? "L" : "S", text_color=smartTrailUp ? color.lime : color.red, bgcolor=color.new(color.gray, 50), text_size=size.small)
 
-    // 위치/거래량
-    table.cell(miniTbl, 0, 3, "위치", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 1, 3, str.tostring(pricePosition, "#") + "%", text_color=nearSupport3d ? color.green : nearResistance3d ? color.red : color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 2, 3, "Vol", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 3, 3, str.tostring(volRatio, "#.#") + "x", text_color=volSpike ? color.green : color.gray, text_size=size.tiny)
+    // Row 2: 시그널
+    table.cell(miniTbl, 0, 2, "Signal", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
+    table.cell(miniTbl, 1, 2, sigText, text_color=sigColor, bgcolor=sigBg, text_size=size.normal)
+    table.cell(miniTbl, 2, 2, currentGrade, text_color=sigColor, bgcolor=sigBg, text_size=size.normal)
+    table.cell(miniTbl, 3, 2, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.green : color.gray, bgcolor=sigBg, text_size=size.tiny)
 
-    // 상태
+    // Row 3: 추세
+    table.cell(miniTbl, 0, 3, "추세", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
+    table.cell(miniTbl, 1, 3, str.tostring(uptrendCount) + "/4", text_color=uptrendCount >= 3 ? color.green : color.gray, text_size=size.tiny)
+    table.cell(miniTbl, 2, 3, tf1h_uptrend ? "1H:UP" : "1H:DN", text_color=tf1h_uptrend ? color.green : color.red, text_size=size.tiny)
+    table.cell(miniTbl, 3, 3, tf4h_uptrend ? "4H:UP" : "4H:DN", text_color=tf4h_uptrend ? color.green : color.red, text_size=size.tiny)
+
+    // Row 4: 위치/거래량
+    table.cell(miniTbl, 0, 4, "위치", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
+    table.cell(miniTbl, 1, 4, str.tostring(pricePosition, "#") + "%", text_color=nearSupport3d ? color.green : nearResistance3d ? color.red : color.gray, text_size=size.tiny)
+    table.cell(miniTbl, 2, 4, "Vol", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
+    table.cell(miniTbl, 3, 4, str.tostring(volRatio, "#.#") + "x", text_color=volSpike ? color.green : color.gray, text_size=size.tiny)
+
+    // Row 5: 상태
     color statusBg = exitLongSignal ? color.new(color.red, 50) : trailFlipToShort ? color.new(color.orange, 60) : color.new(color.gray, 70)
-    table.cell(miniTbl, 0, 4, "STATUS", text_color=color.white, bgcolor=color.navy, text_size=size.tiny)
-    table.cell(miniTbl, 1, 4, statusText, text_color=statusColor, bgcolor=statusBg, text_size=size.normal)
-    table.cell(miniTbl, 2, 4, inDiscount ? "DISC" : inPremium ? "PREM" : "MID", text_color=inDiscount ? color.green : inPremium ? color.red : color.gray, bgcolor=statusBg, text_size=size.tiny)
-    table.cell(miniTbl, 3, 4, superLong ? "GO!!" : strongLong ? "GO!" : exitLongSignal ? "OUT!" : "", text_color=superLong ? color.aqua : strongLong ? color.yellow : color.red, bgcolor=statusBg, text_size=size.small)
+    table.cell(miniTbl, 0, 5, "STATUS", text_color=color.white, bgcolor=color.navy, text_size=size.tiny)
+    table.cell(miniTbl, 1, 5, statusText, text_color=statusColor, bgcolor=statusBg, text_size=size.normal)
+    table.cell(miniTbl, 2, 5, inDiscount ? "DISC" : inPremium ? "PREM" : "MID", text_color=inDiscount ? color.green : inPremium ? color.red : color.gray, bgcolor=statusBg, text_size=size.tiny)
+    table.cell(miniTbl, 3, 5, superLong ? "GO!!" : strongLong ? "GO!" : exitLongSignal ? "OUT!" : "", text_color=superLong ? color.aqua : strongLong ? color.yellow : color.red, bgcolor=statusBg, text_size=size.small)
 
 // ============================================
-// 알림
+// 알림 (참고용 - 투자권유 아님)
 // ============================================
-
-// TP/SL 계산
-float tp1 = close * 1.005
-float tp2 = close * 1.01
-float sl = close * 0.997
 
 // 거래량 배수 텍스트 (5분봉 제거)
 string volDetail15m = "15m:" + str.tostring(tf15m_volRatio, "#.#") + "x"
@@ -986,37 +994,35 @@ string volDetail1h = "1H:" + str.tostring(tf1h_volRatio, "#.#") + "x"
 string volDetail4h = "4H:" + str.tostring(tf4h_volRatio, "#.#") + "x"
 string volDetails = volDetail15m + " " + volDetail1h + " " + volDetail4h
 
+// 면책 문구
+string disclaimer = "[참고용-투자권유아님]"
+
 if superLong
     string m1 = "***** SUPER LONG [" + finalGrade + "] " + str.tostring(longScore, "#") + "pt *****"
     string m2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
     string m3 = "MTF + SMC + Smart Trail 모두 일치!"
-    string m4 = "추세: " + trendStrength + " (" + str.tostring(trendScore) + "/14)"
-    string m5 = "SMC: " + (isBullishOB ? "OB+ " : "") + (isBullishFVG ? "FVG+ " : "") + (chochUp ? "CHoCH+ " : "") + "Zone: DISCOUNT"
-    string m6 = "Smart Trail: LONG | 위치: " + str.tostring(pricePosition, "#") + "%"
-    string m7 = "TP1:$" + str.tostring(tp1, "#.##") + " TP2:$" + str.tostring(tp2, "#.##") + " SL:$" + str.tostring(sl, "#.##")
-    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7
+    string m4 = "추세: " + trendStrength + " | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string m5 = "TF:" + str.tostring(uptrendCount) + "/4 | Vol:" + str.tostring(volSpikeCount) + "/4"
+    string m6 = disclaimer
+    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6
     alert(msg, freq=alert.freq_once_per_bar)
 
 if strongLong and not superLong
     string m1 = "*** STRONG LONG [" + currentGrade + "] " + str.tostring(longScore, "#") + "pt ***"
     string m2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
-    string m3 = highConfidenceLong ? "Reason: " + confReason : ""
-    string m4 = "추세: " + trendStrength + " (" + str.tostring(trendScore) + "/14)"
-    string m5 = "TF:" + str.tostring(uptrendCount) + "/4 EMA:" + str.tostring(emaAlignedUpCount) + "/5 MACD:" + str.tostring(macdBullCount) + "/5"
-    string m6 = "위치: " + str.tostring(pricePosition, "#") + "% ADX:" + str.tostring(adxValue, "#")
-    string m7 = "Vol배수: " + volDetails
-    string m8 = "TP1:$" + str.tostring(tp1, "#.##") + " TP2:$" + str.tostring(tp2, "#.##") + " SL:$" + str.tostring(sl, "#.##")
-    string msg = m1 + "\n" + m2 + (m3 != "" ? "\n" + m3 : "") + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7 + "\n" + m8
+    string m3 = "추세: " + trendStrength + " | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string m4 = "TF:" + str.tostring(uptrendCount) + "/4 EMA:" + str.tostring(emaAlignedUpCount) + "/5"
+    string m5 = "Vol배수: " + volDetails
+    string m6 = disclaimer
+    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6
     alert(msg, freq=alert.freq_once_per_bar)
 
 if normalLong and signalMode == "전체"
     string m1 = "LONG [" + currentGrade + "] " + str.tostring(longScore, "#") + "pt"
     string m2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
     string m3 = "추세:" + trendStrength + " TF:" + str.tostring(uptrendCount) + "/4"
-    string m4 = "EMA:" + str.tostring(emaAlignedUpCount) + "/5 MACD:" + str.tostring(macdBullCount) + "/5"
-    string m5 = "Vol: 현재" + str.tostring(volRatio, "#.#") + "x " + volDetail1h + " " + volDetail4h
-    string m6 = "TP1:$" + str.tostring(tp1, "#.##") + " SL:$" + str.tostring(sl, "#.##")
-    alert(m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6, freq=alert.freq_once_per_bar)
+    string m4 = "Vol: " + str.tostring(volRatio, "#.#") + "x | " + disclaimer
+    alert(m1 + "\n" + m2 + "\n" + m3 + "\n" + m4, freq=alert.freq_once_per_bar)
 
 // ============================================
 // 청산 알림
@@ -1027,12 +1033,12 @@ if exitLongSignal
     string e2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
     string e3 = "Smart Trail이 SHORT로 전환됨"
     string e4 = "점수: " + str.tostring(longScore, "#") + "pt | 1H추세: " + (tf1h_uptrend ? "UP" : "DOWN")
-    string e5 = "즉시 청산 권장"
+    string e5 = disclaimer
     alert(e1 + "\n" + e2 + "\n" + e3 + "\n" + e4 + "\n" + e5, freq=alert.freq_once_per_bar)
 
 if trailFlipToShort and not exitLongSignal
     string w1 = "!! Trail Warning !!"
     string w2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
     string w3 = "Smart Trail SHORT 전환 - 모니터링 필요"
-    string w4 = "점수: " + str.tostring(longScore, "#") + "pt | 등급: " + currentGrade
+    string w4 = "점수: " + str.tostring(longScore, "#") + "pt | " + disclaimer
     alert(w1 + "\n" + w2 + "\n" + w3 + "\n" + w4, freq=alert.freq_once_per_bar)
