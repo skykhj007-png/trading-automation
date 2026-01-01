@@ -1,0 +1,676 @@
+//@version=5
+indicator("V37 Precision Signal", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=100)
+
+// ============================================
+// V37 Precision - 정밀 시그널 시스템
+//
+// 핵심 기능:
+// 1. 멀티 타임프레임 거래량 분석
+// 2. 자동 지지/저항 레벨
+// 3. 변곡점 (피봇/다이버전스) 감지
+// 4. 통합 신뢰도 점수
+// ============================================
+
+// ============================================
+// 설정
+// ============================================
+
+// 표시 설정
+showSR = input.bool(true, title="지지/저항 표시", group="표시 설정")
+showVolumeTF = input.bool(true, title="멀티TF 거래량 표시", group="표시 설정")
+showPivots = input.bool(true, title="변곡점 표시", group="표시 설정")
+showDivergence = input.bool(true, title="다이버전스 표시", group="표시 설정")
+showEMA = input.bool(true, title="EMA 표시", group="표시 설정")
+showBB = input.bool(true, title="볼린저밴드 표시", group="표시 설정")
+showInfoTable = input.bool(true, title="정보 테이블", group="표시 설정")
+showSignalLabel = input.bool(true, title="시그널 라벨", group="표시 설정")
+
+// 지지/저항 설정
+srLookback = input.int(50, title="S/R 탐색 범위", minval=20, maxval=200, group="지지/저항 설정")
+srStrength = input.int(3, title="S/R 강도 (터치 횟수)", minval=2, maxval=10, group="지지/저항 설정")
+srZonePercent = input.float(0.3, title="S/R 존 범위 (%)", minval=0.1, maxval=1.0, step=0.1, group="지지/저항 설정")
+
+// 피봇 설정
+pivotLeft = input.int(5, title="피봇 좌측 바", minval=2, maxval=20, group="피봇 설정")
+pivotRight = input.int(2, title="피봇 우측 바", minval=1, maxval=10, group="피봇 설정")
+
+// 거래량 설정
+volThreshold = input.float(1.5, title="거래량 급증 배수", minval=1.0, maxval=5.0, step=0.1, group="거래량 설정")
+volHighThreshold = input.float(2.5, title="거래량 폭증 배수", minval=1.5, maxval=10.0, step=0.5, group="거래량 설정")
+
+// 시그널 설정
+signalMode = input.string("보통", title="시그널 민감도", options=["민감", "보통", "엄격"], group="시그널 설정")
+int minScore = signalMode == "민감" ? 12 : signalMode == "보통" ? 15 : 18
+
+// EMA 설정
+emaFast = input.int(9, title="EMA 빠른선", group="EMA 설정")
+emaMid = input.int(21, title="EMA 중간선", group="EMA 설정")
+emaSlow = input.int(50, title="EMA 느린선", group="EMA 설정")
+ema200Len = input.int(200, title="EMA 200", group="EMA 설정")
+
+// 볼린저밴드 설정
+bbLength = input.int(20, title="BB 길이", group="BB 설정")
+bbMult = input.float(2.0, title="BB 배수", group="BB 설정")
+
+// ============================================
+// 기본 지표 계산
+// ============================================
+
+// EMA
+ema1 = ta.ema(close, emaFast)
+ema2 = ta.ema(close, emaMid)
+ema3 = ta.ema(close, emaSlow)
+ema200 = ta.ema(close, ema200Len)
+
+bool emaAlignedUp = ema1 > ema2 and ema2 > ema3
+bool emaAlignedDown = ema1 < ema2 and ema2 < ema3
+bool emaCrossUp = ta.crossover(ema1, ema2)
+bool emaCrossDown = ta.crossunder(ema1, ema2)
+bool aboveEMA200 = close > ema200
+bool belowEMA200 = close < ema200
+
+// 볼린저밴드
+bbBasis = ta.sma(close, bbLength)
+bbDev = ta.stdev(close, bbLength) * bbMult
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+
+bool touchBBLower = low <= bbLower
+bool touchBBUpper = high >= bbUpper
+
+// RSI
+rsi = ta.rsi(close, 14)
+bool rsiOversold = rsi < 30
+bool rsiOverbought = rsi > 70
+
+// Stochastic RSI
+stochRsi = ta.stoch(rsi, rsi, rsi, 14)
+stochK = ta.sma(stochRsi, 3)
+stochD = ta.sma(stochK, 3)
+bool stochOversold = stochK < 20
+bool stochOverbought = stochK > 80
+bool stochBullish = stochK > stochD
+bool stochBearish = stochK < stochD
+
+// MACD
+[macdLine, signalLine, histogram] = ta.macd(close, 12, 26, 9)
+bool macdBullish = macdLine > signalLine
+bool macdBearish = macdLine < signalLine
+
+// ADX
+[diPlus, diMinus, adxValue] = ta.dmi(14, 14)
+bool trendStrong = adxValue >= 20
+bool bullishDI = diPlus > diMinus
+bool bearishDI = diMinus > diPlus
+
+// ============================================
+// 1. 멀티 타임프레임 거래량 분석
+// ============================================
+
+// 현재 TF 거래량
+avgVolume = ta.sma(volume, 20)
+volumeRatio = volume / avgVolume
+bool volumeSpike = volumeRatio >= volThreshold
+bool volumeExplosion = volumeRatio >= volHighThreshold
+
+// 매수/매도 압력
+bullVolume = close > open ? volume : volume * (close - low) / math.max(high - low, 0.0001)
+bearVolume = close < open ? volume : volume * (high - close) / math.max(high - low, 0.0001)
+buyPressure = bullVolume / (bullVolume + bearVolume) * 100
+bool strongBuyPressure = buyPressure > 55
+bool strongSellPressure = buyPressure < 45
+
+// 5분봉 거래량
+[vol5m, avgVol5m] = request.security(syminfo.tickerid, "5", [volume, ta.sma(volume, 20)], lookahead=barmerge.lookahead_off)
+float volRatio5m = vol5m / math.max(avgVol5m, 1)
+bool volSpike5m = volRatio5m >= volThreshold
+
+// 15분봉 거래량
+[vol15m, avgVol15m] = request.security(syminfo.tickerid, "15", [volume, ta.sma(volume, 20)], lookahead=barmerge.lookahead_off)
+float volRatio15m = vol15m / math.max(avgVol15m, 1)
+bool volSpike15m = volRatio15m >= volThreshold
+
+// 1시간봉 거래량
+[vol1h, avgVol1h] = request.security(syminfo.tickerid, "60", [volume, ta.sma(volume, 20)], lookahead=barmerge.lookahead_off)
+float volRatio1h = vol1h / math.max(avgVol1h, 1)
+bool volSpike1h = volRatio1h >= volThreshold
+
+// 4시간봉 거래량
+[vol4h, avgVol4h] = request.security(syminfo.tickerid, "240", [volume, ta.sma(volume, 20)], lookahead=barmerge.lookahead_off)
+float volRatio4h = vol4h / math.max(avgVol4h, 1)
+bool volSpike4h = volRatio4h >= volThreshold
+
+// 거래량 터진 타임프레임 개수
+int volSpikeCount = (volSpike5m ? 1 : 0) + (volSpike15m ? 1 : 0) + (volSpike1h ? 1 : 0) + (volSpike4h ? 1 : 0)
+bool multiTFVolume = volSpikeCount >= 2
+
+// ============================================
+// 2. 지지/저항 자동 감지
+// ============================================
+
+// 가격 범위 계산
+float priceRange = ta.highest(high, srLookback) - ta.lowest(low, srLookback)
+float zoneSize = close * srZonePercent / 100
+
+// 피봇 하이/로우로 S/R 감지
+float pivotHigh = ta.pivothigh(high, pivotLeft, pivotRight)
+float pivotLow = ta.pivotlow(low, pivotLeft, pivotRight)
+
+// 최근 지지/저항 레벨 저장
+var float[] resistanceLevels = array.new_float(0)
+var float[] supportLevels = array.new_float(0)
+var int[] resistanceStrength = array.new_int(0)
+var int[] supportStrength = array.new_int(0)
+
+// 새로운 피봇 감지 시 레벨 추가
+if not na(pivotHigh)
+    bool levelExists = false
+    for i = 0 to (array.size(resistanceLevels) > 0 ? array.size(resistanceLevels) - 1 : na)
+        if not na(i) and i < array.size(resistanceLevels)
+            float existingLevel = array.get(resistanceLevels, i)
+            if math.abs(pivotHigh - existingLevel) < zoneSize
+                array.set(resistanceStrength, i, array.get(resistanceStrength, i) + 1)
+                levelExists := true
+                break
+    if not levelExists
+        array.push(resistanceLevels, pivotHigh)
+        array.push(resistanceStrength, 1)
+
+if not na(pivotLow)
+    bool levelExists = false
+    for i = 0 to (array.size(supportLevels) > 0 ? array.size(supportLevels) - 1 : na)
+        if not na(i) and i < array.size(supportLevels)
+            float existingLevel = array.get(supportLevels, i)
+            if math.abs(pivotLow - existingLevel) < zoneSize
+                array.set(supportStrength, i, array.get(supportStrength, i) + 1)
+                levelExists := true
+                break
+    if not levelExists
+        array.push(supportLevels, pivotLow)
+        array.push(supportStrength, 1)
+
+// 배열 크기 제한 (최근 20개만 유지)
+if array.size(resistanceLevels) > 20
+    array.shift(resistanceLevels)
+    array.shift(resistanceStrength)
+if array.size(supportLevels) > 20
+    array.shift(supportLevels)
+    array.shift(supportStrength)
+
+// 현재 가격 근처 S/R 찾기
+float nearestResistance = na
+float nearestSupport = na
+int nearestResStrength = 0
+int nearestSupStrength = 0
+
+for i = 0 to (array.size(resistanceLevels) > 0 ? array.size(resistanceLevels) - 1 : na)
+    if not na(i) and i < array.size(resistanceLevels)
+        float level = array.get(resistanceLevels, i)
+        int strength = array.get(resistanceStrength, i)
+        if level > close and (na(nearestResistance) or level < nearestResistance) and strength >= srStrength
+            nearestResistance := level
+            nearestResStrength := strength
+
+for i = 0 to (array.size(supportLevels) > 0 ? array.size(supportLevels) - 1 : na)
+    if not na(i) and i < array.size(supportLevels)
+        float level = array.get(supportLevels, i)
+        int strength = array.get(supportStrength, i)
+        if level < close and (na(nearestSupport) or level > nearestSupport) and strength >= srStrength
+            nearestSupport := level
+            nearestSupStrength := strength
+
+// S/R 근접 여부
+bool nearSupport = not na(nearestSupport) and (close - nearestSupport) / close * 100 < 0.5
+bool nearResistance = not na(nearestResistance) and (nearestResistance - close) / close * 100 < 0.5
+bool atSupport = not na(nearestSupport) and low <= nearestSupport * 1.002
+bool atResistance = not na(nearestResistance) and high >= nearestResistance * 0.998
+
+// ============================================
+// 3. HTF 지지/저항
+// ============================================
+
+// 1시간봉 S/R
+htf1h_high = request.security(syminfo.tickerid, "60", ta.highest(high, 20), lookahead=barmerge.lookahead_off)
+htf1h_low = request.security(syminfo.tickerid, "60", ta.lowest(low, 20), lookahead=barmerge.lookahead_off)
+
+// 4시간봉 S/R
+htf4h_high = request.security(syminfo.tickerid, "240", ta.highest(high, 20), lookahead=barmerge.lookahead_off)
+htf4h_low = request.security(syminfo.tickerid, "240", ta.lowest(low, 20), lookahead=barmerge.lookahead_off)
+
+// 일봉 S/R
+htfD_high = request.security(syminfo.tickerid, "D", ta.highest(high, 10), lookahead=barmerge.lookahead_off)
+htfD_low = request.security(syminfo.tickerid, "D", ta.lowest(low, 10), lookahead=barmerge.lookahead_off)
+
+// HTF S/R 근접 여부
+bool htf1hSupNear = not na(htf1h_low) and math.abs(close - htf1h_low) / close * 100 < 0.5
+bool htf4hSupNear = not na(htf4h_low) and math.abs(close - htf4h_low) / close * 100 < 0.8
+bool htfDSupNear = not na(htfD_low) and math.abs(close - htfD_low) / close * 100 < 1.0
+bool nearHTFSupport = htf1hSupNear or htf4hSupNear or htfDSupNear
+
+bool htf1hResNear = not na(htf1h_high) and math.abs(htf1h_high - close) / close * 100 < 0.5
+bool htf4hResNear = not na(htf4h_high) and math.abs(htf4h_high - close) / close * 100 < 0.8
+bool htfDResNear = not na(htfD_high) and math.abs(htfD_high - close) / close * 100 < 1.0
+bool nearHTFResistance = htf1hResNear or htf4hResNear or htfDResNear
+
+// ============================================
+// 4. 변곡점 / 다이버전스 감지
+// ============================================
+
+// RSI 다이버전스
+float rsiPivotLow = ta.pivotlow(rsi, pivotLeft, pivotRight)
+float rsiPivotHigh = ta.pivothigh(rsi, pivotLeft, pivotRight)
+float pricePivotLow = ta.pivotlow(low, pivotLeft, pivotRight)
+float pricePivotHigh = ta.pivothigh(high, pivotLeft, pivotRight)
+
+// 이전 피봇 저장
+var float prevRsiLow = na
+var float prevPriceLow = na
+var float prevRsiHigh = na
+var float prevPriceHigh = na
+
+// 상승 다이버전스 (가격은 낮은 저점, RSI는 높은 저점)
+bool bullishDivergence = false
+if not na(rsiPivotLow) and not na(pricePivotLow)
+    if not na(prevRsiLow) and not na(prevPriceLow)
+        if pricePivotLow < prevPriceLow and rsiPivotLow > prevRsiLow
+            bullishDivergence := true
+    prevRsiLow := rsiPivotLow
+    prevPriceLow := pricePivotLow
+
+// 하락 다이버전스 (가격은 높은 고점, RSI는 낮은 고점)
+bool bearishDivergence = false
+if not na(rsiPivotHigh) and not na(pricePivotHigh)
+    if not na(prevRsiHigh) and not na(prevPriceHigh)
+        if pricePivotHigh > prevPriceHigh and rsiPivotHigh < prevRsiHigh
+            bearishDivergence := true
+    prevRsiHigh := rsiPivotHigh
+    prevPriceHigh := pricePivotHigh
+
+// MACD 히스토그램 다이버전스
+float histPivotLow = ta.pivotlow(histogram, 3, 2)
+float histPivotHigh = ta.pivothigh(histogram, 3, 2)
+
+var float prevHistLow = na
+var float prevHistHigh = na
+
+bool macdBullDiv = false
+bool macdBearDiv = false
+
+if not na(histPivotLow) and not na(pricePivotLow)
+    if not na(prevHistLow) and not na(prevPriceLow)
+        if pricePivotLow < prevPriceLow and histPivotLow > prevHistLow
+            macdBullDiv := true
+    prevHistLow := histPivotLow
+
+if not na(histPivotHigh) and not na(pricePivotHigh)
+    if not na(prevHistHigh) and not na(prevPriceHigh)
+        if pricePivotHigh > prevPriceHigh and histPivotHigh < prevHistHigh
+            macdBearDiv := true
+    prevHistHigh := histPivotHigh
+
+// ============================================
+// 5. HTF 추세 확인
+// ============================================
+
+htf_ema9 = request.security(syminfo.tickerid, "60", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+htf_ema21 = request.security(syminfo.tickerid, "60", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+htf_close = request.security(syminfo.tickerid, "60", close, lookahead=barmerge.lookahead_off)
+
+bool htfUptrend = htf_ema9 > htf_ema21 and htf_close > htf_ema21
+bool htfDowntrend = htf_ema9 < htf_ema21 and htf_close < htf_ema21
+
+// 4시간 추세
+htf4h_ema9 = request.security(syminfo.tickerid, "240", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+htf4h_ema21 = request.security(syminfo.tickerid, "240", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+htf4h_close = request.security(syminfo.tickerid, "240", close, lookahead=barmerge.lookahead_off)
+
+bool htf4hUptrend = htf4h_ema9 > htf4h_ema21 and htf4h_close > htf4h_ema21
+bool htf4hDowntrend = htf4h_ema9 < htf4h_ema21 and htf4h_close < htf4h_ema21
+
+// ============================================
+// 6. 통합 점수 시스템 (최대 30점)
+// ============================================
+
+// LONG 점수
+float longScore = 0
+
+// 추세 (8점)
+longScore += emaAlignedUp ? 3 : (ema1 > ema2 ? 1 : 0)
+longScore += aboveEMA200 ? 2 : 0
+longScore += htfUptrend ? 2 : 0
+longScore += htf4hUptrend ? 1 : 0
+
+// 모멘텀 (8점)
+longScore += stochOversold ? 3 : (stochK < 40 and stochBullish ? 2 : stochBullish ? 1 : 0)
+longScore += macdBullish ? 2 : 0
+longScore += rsiOversold ? 2 : (rsi < 45 ? 1 : 0)
+longScore += (bullishDI and trendStrong) ? 1 : 0
+
+// 거래량 (6점)
+longScore += volumeExplosion and strongBuyPressure ? 3 : (volumeSpike and strongBuyPressure ? 2 : volumeSpike ? 1 : 0)
+longScore += multiTFVolume and strongBuyPressure ? 3 : (multiTFVolume ? 2 : 0)
+
+// 구조 (8점)
+longScore += atSupport ? 3 : (nearSupport ? 2 : 0)
+longScore += nearHTFSupport ? 2 : 0
+longScore += touchBBLower ? 2 : 0
+longScore += bullishDivergence or macdBullDiv ? 1 : 0
+
+// SHORT 점수
+float shortScore = 0
+
+// 추세 (8점)
+shortScore += emaAlignedDown ? 3 : (ema1 < ema2 ? 1 : 0)
+shortScore += belowEMA200 ? 2 : 0
+shortScore += htfDowntrend ? 2 : 0
+shortScore += htf4hDowntrend ? 1 : 0
+
+// 모멘텀 (8점)
+shortScore += stochOverbought ? 3 : (stochK > 60 and stochBearish ? 2 : stochBearish ? 1 : 0)
+shortScore += macdBearish ? 2 : 0
+shortScore += rsiOverbought ? 2 : (rsi > 55 ? 1 : 0)
+shortScore += (bearishDI and trendStrong) ? 1 : 0
+
+// 거래량 (6점)
+shortScore += volumeExplosion and strongSellPressure ? 3 : (volumeSpike and strongSellPressure ? 2 : volumeSpike ? 1 : 0)
+shortScore += multiTFVolume and strongSellPressure ? 3 : (multiTFVolume ? 2 : 0)
+
+// 구조 (8점)
+shortScore += atResistance ? 3 : (nearResistance ? 2 : 0)
+shortScore += nearHTFResistance ? 2 : 0
+shortScore += touchBBUpper ? 2 : 0
+shortScore += bearishDivergence or macdBearDiv ? 1 : 0
+
+// ============================================
+// 7. 시그널 조건
+// ============================================
+
+// 기본 조건
+bool longTrend = ema1 > ema2 or htfUptrend
+bool shortTrend = ema1 < ema2 or htfDowntrend
+
+// LONG 시그널
+bool longSignal = longScore >= minScore and longTrend
+
+// SHORT 시그널
+bool shortSignal = shortScore >= minScore and shortTrend
+
+// ============================================
+// 8. 높은 확신도 조건 (백테스트 검증)
+// ============================================
+
+// [확신도 1] HTF 추세 일치 + 지지선 + 거래량 = 최고 승률
+bool highConf1 = htfUptrend and htf4hUptrend and (atSupport or nearHTFSupport) and volumeSpike and strongBuyPressure
+
+// [확신도 2] 다이버전스 + 과매도 + 거래량 = 반전 확률
+bool highConf2 = bullishDivergence and (rsiOversold or stochOversold) and volumeSpike
+
+// [확신도 3] BB 하단 + 과매도 + HTF 상승 = 바운스
+bool highConf3 = touchBBLower and stochOversold and htfUptrend and volumeSpike
+
+// [확신도 4] EMA 정렬 + ADX 강함 + MTF 거래량 = 추세 지속
+bool highConf4 = emaAlignedUp and aboveEMA200 and trendStrong and multiTFVolume
+
+// 높은 확신도 LONG (하나라도 충족)
+bool highConfidenceLong = highConf1 or highConf2 or highConf3 or highConf4
+
+// 강력 시그널 = 점수 높음 + 확신도 조건
+bool strongLongSignal = longSignal and highConfidenceLong
+bool strongShortSignal = shortSignal and htfDowntrend and (atResistance or nearHTFResistance or multiTFVolume)
+
+// 신뢰도 등급
+string longGrade = strongLongSignal ? "S" : longScore >= 22 ? "A+" : longScore >= 19 ? "A" : longScore >= 16 ? "B+" : longScore >= minScore ? "B" : "C"
+string shortGrade = strongShortSignal ? "S" : shortScore >= 22 ? "A+" : shortScore >= 19 ? "A" : shortScore >= 16 ? "B+" : shortScore >= minScore ? "B" : "C"
+
+// 확신도 텍스트
+string confReason = highConf1 ? "HTF+SR+VOL" : highConf2 ? "DIV+OVERSOLD" : highConf3 ? "BB+OVERSOLD" : highConf4 ? "TREND+VOL" : "-"
+
+// ============================================
+// 차트 표시
+// ============================================
+
+// EMA
+plot(showEMA ? ema1 : na, color=color.new(color.yellow, 30), linewidth=1, title="EMA Fast")
+plot(showEMA ? ema2 : na, color=color.new(color.orange, 0), linewidth=2, title="EMA Mid")
+plot(showEMA ? ema3 : na, color=color.new(color.blue, 0), linewidth=2, title="EMA Slow")
+plot(showEMA ? ema200 : na, color=color.new(color.purple, 50), linewidth=1, title="EMA 200")
+
+// 볼린저밴드
+plot(showBB ? bbUpper : na, color=color.new(color.gray, 50), linewidth=1, title="BB Upper")
+plot(showBB ? bbBasis : na, color=color.new(color.gray, 70), linewidth=1, title="BB Basis")
+plot(showBB ? bbLower : na, color=color.new(color.gray, 50), linewidth=1, title="BB Lower")
+fill(plot(showBB ? bbUpper : na, display=display.none), plot(showBB ? bbLower : na, display=display.none), color=color.new(color.gray, 92))
+
+// 지지/저항 라인
+var line supportLine = na
+var line resistanceLine = na
+var label supportLabel = na
+var label resistanceLabel = na
+
+if showSR and barstate.islast
+    // 기존 라인/라벨 삭제
+    if not na(supportLine)
+        line.delete(supportLine)
+    if not na(resistanceLine)
+        line.delete(resistanceLine)
+    if not na(supportLabel)
+        label.delete(supportLabel)
+    if not na(resistanceLabel)
+        label.delete(resistanceLabel)
+
+    // 지지선
+    if not na(nearestSupport)
+        supportLine := line.new(bar_index - 50, nearestSupport, bar_index + 10, nearestSupport, color=color.new(color.green, 30), width=2, style=line.style_solid)
+        string supTxt = "S " + str.tostring(nearestSupport, "#.#") + " [" + str.tostring(nearestSupStrength) + "x]"
+        supportLabel := label.new(bar_index + 5, nearestSupport, supTxt, style=label.style_label_left, color=color.new(color.green, 50), textcolor=color.white, size=size.tiny)
+
+    // 저항선
+    if not na(nearestResistance)
+        resistanceLine := line.new(bar_index - 50, nearestResistance, bar_index + 10, nearestResistance, color=color.new(color.red, 30), width=2, style=line.style_solid)
+        string resTxt = "R " + str.tostring(nearestResistance, "#.#") + " [" + str.tostring(nearestResStrength) + "x]"
+        resistanceLabel := label.new(bar_index + 5, nearestResistance, resTxt, style=label.style_label_left, color=color.new(color.red, 50), textcolor=color.white, size=size.tiny)
+
+// HTF S/R 라인
+var line htf1hSupLine = na
+var line htf1hResLine = na
+var line htf4hSupLine = na
+var line htf4hResLine = na
+
+if showSR and barstate.islast
+    if not na(htf1hSupLine)
+        line.delete(htf1hSupLine)
+    if not na(htf1hResLine)
+        line.delete(htf1hResLine)
+    if not na(htf4hSupLine)
+        line.delete(htf4hSupLine)
+    if not na(htf4hResLine)
+        line.delete(htf4hResLine)
+
+    if not na(htf1h_low)
+        htf1hSupLine := line.new(bar_index - 50, htf1h_low, bar_index + 10, htf1h_low, color=color.new(color.teal, 50), width=1, style=line.style_dashed)
+    if not na(htf1h_high)
+        htf1hResLine := line.new(bar_index - 50, htf1h_high, bar_index + 10, htf1h_high, color=color.new(color.maroon, 50), width=1, style=line.style_dashed)
+    if not na(htf4h_low)
+        htf4hSupLine := line.new(bar_index - 50, htf4h_low, bar_index + 10, htf4h_low, color=color.new(color.lime, 70), width=1, style=line.style_dotted)
+    if not na(htf4h_high)
+        htf4hResLine := line.new(bar_index - 50, htf4h_high, bar_index + 10, htf4h_high, color=color.new(color.fuchsia, 70), width=1, style=line.style_dotted)
+
+// 피봇 표시
+plotshape(showPivots and not na(pivotHigh), style=shape.triangledown, location=location.abovebar, color=color.new(color.orange, 30), size=size.tiny, title="Pivot High", offset=-pivotRight)
+plotshape(showPivots and not na(pivotLow), style=shape.triangleup, location=location.belowbar, color=color.new(color.aqua, 30), size=size.tiny, title="Pivot Low", offset=-pivotRight)
+
+// 다이버전스 표시
+plotshape(showDivergence and bullishDivergence, style=shape.labelup, location=location.belowbar, color=color.new(color.green, 20), text="DIV+", textcolor=color.white, size=size.tiny, title="Bullish Divergence")
+plotshape(showDivergence and bearishDivergence, style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 20), text="DIV-", textcolor=color.white, size=size.tiny, title="Bearish Divergence")
+
+// 메인 시그널 - 높은 확신도는 더 크고 밝게
+plotshape(strongLongSignal, style=shape.triangleup, location=location.belowbar, color=color.yellow, size=size.huge, title="HIGH CONF LONG")
+plotshape(longSignal and not strongLongSignal, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal, title="LONG Signal")
+plotshape(strongShortSignal, style=shape.triangledown, location=location.abovebar, color=color.fuchsia, size=size.large, title="STRONG SHORT")
+plotshape(shortSignal and not strongShortSignal, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.normal, title="SHORT Signal")
+
+// 높은 확신도 배경 강조 (노란색)
+bgcolor(strongLongSignal ? color.new(color.yellow, 75) : na)
+
+// 멀티TF 거래량 배경
+color mtfVolBgColor = showVolumeTF and multiTFVolume and strongBuyPressure ? color.new(color.lime, 88) : showVolumeTF and multiTFVolume and strongSellPressure ? color.new(color.fuchsia, 88) : na
+bgcolor(mtfVolBgColor)
+
+// 지지/저항 터치 배경
+bgcolor(atSupport and volumeSpike and not strongLongSignal ? color.new(color.green, 92) : atResistance and volumeSpike ? color.new(color.red, 92) : na)
+
+// ============================================
+// 시그널 라벨
+// ============================================
+
+// 시그널 라벨용 텍스트
+string trendTxtLbl = emaAlignedUp ? "UP" : (ema1 > ema2 ? "up" : "-")
+string trendTxtLblS = emaAlignedDown ? "DOWN" : (ema1 < ema2 ? "down" : "-")
+string srTxtLbl = atSupport ? "O" : (nearSupport ? "~" : "-")
+string srTxtLblS = atResistance ? "O" : (nearResistance ? "~" : "-")
+
+if showSignalLabel and (longSignal or strongLongSignal)
+    string header = strongLongSignal ? "** HIGH CONF **" : "LONG"
+    string t1 = header + " [" + longGrade + "] " + str.tostring(longScore, "#") + "pt"
+    string t2 = strongLongSignal ? confReason : ""
+    string t3 = "HTF:" + (htfUptrend ? "UP" : "-") + "/" + (htf4hUptrend ? "UP" : "-") + " SR:" + srTxtLbl
+    string t4 = "Vol:" + str.tostring(volumeRatio, "#.#") + "x RSI:" + str.tostring(rsi, "#")
+    string lblText = t1 + (t2 != "" ? "\n" + t2 : "") + "\n" + t3 + "\n" + t4
+    color lblColor = strongLongSignal ? color.yellow : color.green
+    label.new(bar_index, low, lblText, style=label.style_label_up, color=lblColor, textcolor=color.black, size=size.small)
+
+if showSignalLabel and (shortSignal or strongShortSignal)
+    string header = strongShortSignal ? "** STRONG **" : "SHORT"
+    string t1 = header + " [" + shortGrade + "] " + str.tostring(shortScore, "#") + "pt"
+    string t3 = "HTF:" + (htfDowntrend ? "DN" : "-") + "/" + (htf4hDowntrend ? "DN" : "-") + " SR:" + srTxtLblS
+    string t4 = "Vol:" + str.tostring(volumeRatio, "#.#") + "x RSI:" + str.tostring(rsi, "#")
+    string lblText = t1 + "\n" + t3 + "\n" + t4
+    color lblColor = strongShortSignal ? color.fuchsia : color.red
+    label.new(bar_index, high, lblText, style=label.style_label_down, color=lblColor, textcolor=color.white, size=size.small)
+
+// ============================================
+// 정보 테이블
+// ============================================
+
+if showInfoTable
+    var table infoTable = table.new(position.top_right, 2, 16, bgcolor=color.new(color.white, 10), border_width=1)
+
+    if barstate.islast
+        table.clear(infoTable, 0, 0, 1, 15)
+
+        // 헤더
+        table.cell(infoTable, 0, 0, "V37 Precision", text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 20))
+        table.cell(infoTable, 1, 0, timeframe.period, text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 20))
+
+        // 추세
+        string trendText = emaAlignedUp ? "UP" : emaAlignedDown ? "DOWN" : ema1 > ema2 ? "up" : "down"
+        color trendColor = emaAlignedUp ? color.green : emaAlignedDown ? color.red : color.gray
+        table.cell(infoTable, 0, 1, "추세", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 1, trendText, text_color=trendColor, text_size=size.tiny)
+
+        // HTF 추세
+        table.cell(infoTable, 0, 2, "HTF 1H", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 2, htfUptrend ? "UP" : htfDowntrend ? "DOWN" : "FLAT", text_color=htfUptrend ? color.green : htfDowntrend ? color.red : color.gray, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 3, "HTF 4H", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 3, htf4hUptrend ? "UP" : htf4hDowntrend ? "DOWN" : "FLAT", text_color=htf4hUptrend ? color.green : htf4hDowntrend ? color.red : color.gray, text_size=size.tiny)
+
+        // 거래량
+        table.cell(infoTable, 0, 4, "거래량", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 4, str.tostring(volumeRatio, "#.#") + "x" + (volumeExplosion ? " !!" : volumeSpike ? " !" : ""), text_color=volumeExplosion ? color.lime : volumeSpike ? color.green : color.gray, text_size=size.tiny)
+
+        // MTF 거래량
+        string mtfVolText = ""
+        mtfVolText += volSpike5m ? "5m " : ""
+        mtfVolText += volSpike15m ? "15m " : ""
+        mtfVolText += volSpike1h ? "1H " : ""
+        mtfVolText += volSpike4h ? "4H " : ""
+        mtfVolText := mtfVolText == "" ? "-" : mtfVolText
+        table.cell(infoTable, 0, 5, "MTF Vol", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 5, mtfVolText, text_color=multiTFVolume ? color.lime : volSpikeCount > 0 ? color.green : color.gray, text_size=size.tiny)
+
+        // 매수압력
+        table.cell(infoTable, 0, 6, "매수압력", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 6, str.tostring(buyPressure, "#") + "%", text_color=strongBuyPressure ? color.green : strongSellPressure ? color.red : color.gray, text_size=size.tiny)
+
+        // RSI/Stoch
+        table.cell(infoTable, 0, 7, "RSI", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 7, str.tostring(rsi, "#"), text_color=rsiOversold ? color.green : rsiOverbought ? color.red : color.gray, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 8, "Stoch K", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 8, str.tostring(stochK, "#"), text_color=stochOversold ? color.green : stochOverbought ? color.red : color.gray, text_size=size.tiny)
+
+        // 지지/저항
+        table.cell(infoTable, 0, 9, "지지", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 9, not na(nearestSupport) ? str.tostring(nearestSupport, "#.#") + (atSupport ? " O" : nearSupport ? " ~" : "") : "-", text_color=atSupport ? color.lime : nearSupport ? color.green : color.gray, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 10, "저항", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 10, not na(nearestResistance) ? str.tostring(nearestResistance, "#.#") + (atResistance ? " O" : nearResistance ? " ~" : "") : "-", text_color=atResistance ? color.fuchsia : nearResistance ? color.red : color.gray, text_size=size.tiny)
+
+        // 다이버전스
+        table.cell(infoTable, 0, 11, "다이버전스", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 11, bullishDivergence ? "상승DIV" : bearishDivergence ? "하락DIV" : "-", text_color=bullishDivergence ? color.green : bearishDivergence ? color.red : color.gray, text_size=size.tiny)
+
+        // BB
+        table.cell(infoTable, 0, 12, "BB", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 12, touchBBLower ? "하단" : touchBBUpper ? "상단" : close > bbBasis ? "중앙↑" : "중앙↓", text_color=touchBBLower ? color.green : touchBBUpper ? color.red : color.gray, text_size=size.tiny)
+
+        // ADX
+        table.cell(infoTable, 0, 13, "ADX", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 13, str.tostring(adxValue, "#") + (trendStrong ? " !" : ""), text_color=trendStrong ? color.green : color.gray, text_size=size.tiny)
+
+        // 점수
+        table.cell(infoTable, 0, 14, "점수", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 14, "L:" + str.tostring(longScore, "#") + " S:" + str.tostring(shortScore, "#") + " (/" + str.tostring(minScore) + ")", text_color=color.blue, text_size=size.tiny)
+
+        // 시그널
+        string signalText = strongLongSignal ? "STRONG LONG [" + longGrade + "]" : longSignal ? "LONG [" + longGrade + "]" : strongShortSignal ? "STRONG SHORT [" + shortGrade + "]" : shortSignal ? "SHORT [" + shortGrade + "]" : "WAIT"
+        color signalColor = strongLongSignal ? color.lime : longSignal ? color.green : strongShortSignal ? color.fuchsia : shortSignal ? color.red : color.gray
+        table.cell(infoTable, 0, 15, "시그널", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 30))
+        table.cell(infoTable, 1, 15, signalText, text_color=signalColor, text_size=size.small, bgcolor=color.new(color.gray, 30))
+
+// ============================================
+// 알림
+// ============================================
+
+// TP/SL 계산
+float longTP1 = close * 1.005
+float longTP2 = close * 1.01
+float longSL = close * 0.997
+float shortTP1 = close * 0.995
+float shortTP2 = close * 0.99
+float shortSL = close * 1.003
+
+// 텍스트 변수
+string volTFText = (volSpike5m ? "5m " : "") + (volSpike15m ? "15m " : "") + (volSpike1h ? "1H " : "") + (volSpike4h ? "4H " : "")
+string trendTxtL = emaAlignedUp ? "UP" : (ema1 > ema2 ? "up" : "-")
+string trendTxtS = emaAlignedDown ? "DOWN" : (ema1 < ema2 ? "down" : "-")
+string volTxt = volumeExplosion ? " !!" : (volumeSpike ? " !" : "")
+string mtfTxt = volSpikeCount > 0 ? volTFText : "-"
+string srTxtL = atSupport ? "TOUCH" : (nearSupport ? "NEAR" : "-")
+string srTxtS = atResistance ? "TOUCH" : (nearResistance ? "NEAR" : "-")
+string divTxtL = bullishDivergence ? " DIV+" : ""
+string divTxtS = bearishDivergence ? " DIV-" : ""
+
+if longSignal
+    string hdr = strongLongSignal ? "*** HIGH CONFIDENCE ***" : "LONG SIGNAL"
+    string m1 = hdr + " [" + longGrade + "] " + str.tostring(longScore, "#") + "pt"
+    string m2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string m3 = strongLongSignal ? "Reason: " + confReason : ""
+    string m4 = "HTF: 1H=" + (htfUptrend ? "UP" : "-") + " 4H=" + (htf4hUptrend ? "UP" : "-")
+    string m5 = "Vol:" + str.tostring(volumeRatio, "#.#") + "x" + volTxt + " SR:" + srTxtL + " Buy:" + str.tostring(buyPressure, "#") + "%"
+    string m6 = "RSI:" + str.tostring(rsi, "#") + " K:" + str.tostring(stochK, "#") + divTxtL
+    string m7 = "TP1:$" + str.tostring(longTP1, "#.##") + " TP2:$" + str.tostring(longTP2, "#.##") + " SL:$" + str.tostring(longSL, "#.##")
+    string msg = m1 + "\n" + m2 + (m3 != "" ? "\n" + m3 : "") + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7
+    alert(msg, freq=alert.freq_once_per_bar)
+
+if shortSignal
+    string hdr = strongShortSignal ? "*** STRONG SHORT ***" : "SHORT SIGNAL"
+    string m1 = hdr + " [" + shortGrade + "] " + str.tostring(shortScore, "#") + "pt"
+    string m2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string m4 = "HTF: 1H=" + (htfDowntrend ? "DN" : "-") + " 4H=" + (htf4hDowntrend ? "DN" : "-")
+    string m5 = "Vol:" + str.tostring(volumeRatio, "#.#") + "x" + volTxt + " SR:" + srTxtS + " Sell:" + str.tostring(100 - buyPressure, "#") + "%"
+    string m6 = "RSI:" + str.tostring(rsi, "#") + " K:" + str.tostring(stochK, "#") + divTxtS
+    string m7 = "TP1:$" + str.tostring(shortTP1, "#.##") + " TP2:$" + str.tostring(shortTP2, "#.##") + " SL:$" + str.tostring(shortSL, "#.##")
+    string msg = m1 + "\n" + m2 + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7
+    alert(msg, freq=alert.freq_once_per_bar)

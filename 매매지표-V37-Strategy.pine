@@ -1,0 +1,297 @@
+//@version=5
+strategy("V37 Precision Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.04, slippage=1)
+
+// ============================================
+// V37 Strategy - 백테스트용
+// ============================================
+
+// 거래 설정
+longOnly = input.bool(true, title="LONG만 거래", group="거래 설정")
+onlyHighConf = input.bool(true, title="높은 확신도만 거래", group="거래 설정")
+tpPercent = input.float(1.0, title="TP %", minval=0.1, maxval=5.0, step=0.1, group="거래 설정")
+slPercent = input.float(0.5, title="SL %", minval=0.1, maxval=3.0, step=0.1, group="거래 설정")
+
+// 시그널 설정
+signalMode = input.string("보통", title="시그널 민감도", options=["민감", "보통", "엄격"], group="시그널 설정")
+int minScore = signalMode == "민감" ? 12 : signalMode == "보통" ? 15 : 18
+
+// 지표 설정
+emaFast = 9
+emaMid = 21
+emaSlow = 50
+ema200Len = 200
+bbLength = 20
+bbMult = 2.0
+volThreshold = 1.5
+volHighThreshold = 2.5
+pivotLeft = 5
+pivotRight = 2
+srStrength = 3
+
+// ============================================
+// 기본 지표
+// ============================================
+
+ema1 = ta.ema(close, emaFast)
+ema2 = ta.ema(close, emaMid)
+ema3 = ta.ema(close, emaSlow)
+ema200 = ta.ema(close, ema200Len)
+
+bool emaAlignedUp = ema1 > ema2 and ema2 > ema3
+bool emaAlignedDown = ema1 < ema2 and ema2 < ema3
+bool aboveEMA200 = close > ema200
+bool belowEMA200 = close < ema200
+
+bbBasis = ta.sma(close, bbLength)
+bbDev = ta.stdev(close, bbLength) * bbMult
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+
+bool touchBBLower = low <= bbLower
+bool touchBBUpper = high >= bbUpper
+
+rsi = ta.rsi(close, 14)
+bool rsiOversold = rsi < 30
+bool rsiOverbought = rsi > 70
+
+stochRsi = ta.stoch(rsi, rsi, rsi, 14)
+stochK = ta.sma(stochRsi, 3)
+bool stochOversold = stochK < 20
+bool stochOverbought = stochK > 80
+bool stochBullish = stochK > ta.sma(stochK, 3)
+bool stochBearish = stochK < ta.sma(stochK, 3)
+
+[macdLine, signalLine, histogram] = ta.macd(close, 12, 26, 9)
+bool macdBullish = macdLine > signalLine
+bool macdBearish = macdLine < signalLine
+
+[diPlus, diMinus, adxValue] = ta.dmi(14, 14)
+bool trendStrong = adxValue >= 20
+bool bullishDI = diPlus > diMinus
+bool bearishDI = diMinus > diPlus
+
+// ============================================
+// 거래량
+// ============================================
+
+avgVolume = ta.sma(volume, 20)
+volumeRatio = volume / avgVolume
+bool volumeSpike = volumeRatio >= volThreshold
+bool volumeExplosion = volumeRatio >= volHighThreshold
+
+bullVolume = close > open ? volume : volume * (close - low) / math.max(high - low, 0.0001)
+bearVolume = close < open ? volume : volume * (high - close) / math.max(high - low, 0.0001)
+buyPressure = bullVolume / (bullVolume + bearVolume) * 100
+bool strongBuyPressure = buyPressure > 55
+bool strongSellPressure = buyPressure < 45
+
+// MTF 거래량
+vol5m = request.security(syminfo.tickerid, "5", volume, lookahead=barmerge.lookahead_off)
+avgVol5m = request.security(syminfo.tickerid, "5", ta.sma(volume, 20), lookahead=barmerge.lookahead_off)
+vol15m = request.security(syminfo.tickerid, "15", volume, lookahead=barmerge.lookahead_off)
+avgVol15m = request.security(syminfo.tickerid, "15", ta.sma(volume, 20), lookahead=barmerge.lookahead_off)
+vol1h = request.security(syminfo.tickerid, "60", volume, lookahead=barmerge.lookahead_off)
+avgVol1h = request.security(syminfo.tickerid, "60", ta.sma(volume, 20), lookahead=barmerge.lookahead_off)
+
+bool volSpike5m = vol5m / math.max(avgVol5m, 1) >= volThreshold
+bool volSpike15m = vol15m / math.max(avgVol15m, 1) >= volThreshold
+bool volSpike1h = vol1h / math.max(avgVol1h, 1) >= volThreshold
+
+int volSpikeCount = (volSpike5m ? 1 : 0) + (volSpike15m ? 1 : 0) + (volSpike1h ? 1 : 0)
+bool multiTFVolume = volSpikeCount >= 2
+
+// ============================================
+// 지지/저항
+// ============================================
+
+float pivotHigh = ta.pivothigh(high, pivotLeft, pivotRight)
+float pivotLow = ta.pivotlow(low, pivotLeft, pivotRight)
+
+var float[] supportLevels = array.new_float(0)
+var int[] supportStrength = array.new_int(0)
+
+float zoneSize = close * 0.3 / 100
+
+if not na(pivotLow)
+    bool found = false
+    for i = 0 to (array.size(supportLevels) > 0 ? array.size(supportLevels) - 1 : na)
+        if not na(i) and i < array.size(supportLevels)
+            if math.abs(pivotLow - array.get(supportLevels, i)) < zoneSize
+                array.set(supportStrength, i, array.get(supportStrength, i) + 1)
+                found := true
+                break
+    if not found
+        array.push(supportLevels, pivotLow)
+        array.push(supportStrength, 1)
+
+if array.size(supportLevels) > 20
+    array.shift(supportLevels)
+    array.shift(supportStrength)
+
+float nearestSupport = na
+int nearestSupStrength = 0
+for i = 0 to (array.size(supportLevels) > 0 ? array.size(supportLevels) - 1 : na)
+    if not na(i) and i < array.size(supportLevels)
+        float lvl = array.get(supportLevels, i)
+        int str = array.get(supportStrength, i)
+        if lvl < close and (na(nearestSupport) or lvl > nearestSupport) and str >= srStrength
+            nearestSupport := lvl
+            nearestSupStrength := str
+
+bool atSupport = not na(nearestSupport) and low <= nearestSupport * 1.003
+bool nearSupport = not na(nearestSupport) and (close - nearestSupport) / close * 100 < 0.5
+
+// HTF S/R
+htf1h_low = request.security(syminfo.tickerid, "60", ta.lowest(low, 20), lookahead=barmerge.lookahead_off)
+htf4h_low = request.security(syminfo.tickerid, "240", ta.lowest(low, 20), lookahead=barmerge.lookahead_off)
+
+bool nearHTFSupport = (not na(htf1h_low) and math.abs(close - htf1h_low) / close * 100 < 0.5) or (not na(htf4h_low) and math.abs(close - htf4h_low) / close * 100 < 0.8)
+
+// ============================================
+// HTF 추세
+// ============================================
+
+htf_ema9 = request.security(syminfo.tickerid, "60", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+htf_ema21 = request.security(syminfo.tickerid, "60", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+htf_close = request.security(syminfo.tickerid, "60", close, lookahead=barmerge.lookahead_off)
+
+bool htfUptrend = htf_ema9 > htf_ema21 and htf_close > htf_ema21
+bool htfDowntrend = htf_ema9 < htf_ema21 and htf_close < htf_ema21
+
+htf4h_ema9 = request.security(syminfo.tickerid, "240", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+htf4h_ema21 = request.security(syminfo.tickerid, "240", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+htf4h_close = request.security(syminfo.tickerid, "240", close, lookahead=barmerge.lookahead_off)
+
+bool htf4hUptrend = htf4h_ema9 > htf4h_ema21 and htf4h_close > htf4h_ema21
+bool htf4hDowntrend = htf4h_ema9 < htf4h_ema21 and htf4h_close < htf4h_ema21
+
+// ============================================
+// 다이버전스
+// ============================================
+
+float rsiPivotLow = ta.pivotlow(rsi, pivotLeft, pivotRight)
+float pricePivotLow = ta.pivotlow(low, pivotLeft, pivotRight)
+
+var float prevRsiLow = na
+var float prevPriceLow = na
+
+bool bullishDivergence = false
+if not na(rsiPivotLow) and not na(pricePivotLow)
+    if not na(prevRsiLow) and not na(prevPriceLow)
+        if pricePivotLow < prevPriceLow and rsiPivotLow > prevRsiLow
+            bullishDivergence := true
+    prevRsiLow := rsiPivotLow
+    prevPriceLow := pricePivotLow
+
+// ============================================
+// 점수 시스템
+// ============================================
+
+float longScore = 0
+longScore += emaAlignedUp ? 3 : (ema1 > ema2 ? 1 : 0)
+longScore += aboveEMA200 ? 2 : 0
+longScore += htfUptrend ? 2 : 0
+longScore += htf4hUptrend ? 1 : 0
+longScore += stochOversold ? 3 : (stochK < 40 and stochBullish ? 2 : stochBullish ? 1 : 0)
+longScore += macdBullish ? 2 : 0
+longScore += rsiOversold ? 2 : (rsi < 45 ? 1 : 0)
+longScore += (bullishDI and trendStrong) ? 1 : 0
+longScore += volumeExplosion and strongBuyPressure ? 3 : (volumeSpike and strongBuyPressure ? 2 : volumeSpike ? 1 : 0)
+longScore += multiTFVolume and strongBuyPressure ? 3 : (multiTFVolume ? 2 : 0)
+longScore += atSupport ? 3 : (nearSupport ? 2 : 0)
+longScore += nearHTFSupport ? 2 : 0
+longScore += touchBBLower ? 2 : 0
+longScore += bullishDivergence ? 1 : 0
+
+float shortScore = 0
+shortScore += emaAlignedDown ? 3 : (ema1 < ema2 ? 1 : 0)
+shortScore += belowEMA200 ? 2 : 0
+shortScore += htfDowntrend ? 2 : 0
+shortScore += htf4hDowntrend ? 1 : 0
+shortScore += stochOverbought ? 3 : (stochK > 60 and stochBearish ? 2 : stochBearish ? 1 : 0)
+shortScore += macdBearish ? 2 : 0
+shortScore += rsiOverbought ? 2 : (rsi > 55 ? 1 : 0)
+shortScore += (bearishDI and trendStrong) ? 1 : 0
+shortScore += volumeExplosion and strongSellPressure ? 3 : (volumeSpike and strongSellPressure ? 2 : volumeSpike ? 1 : 0)
+shortScore += multiTFVolume and strongSellPressure ? 3 : (multiTFVolume ? 2 : 0)
+shortScore += touchBBUpper ? 2 : 0
+
+// ============================================
+// 높은 확신도 조건 (백테스트 기반)
+// ============================================
+
+// 1. HTF 추세 일치 + 지지선 + 거래량 = 가장 높은 승률
+bool highConfLong1 = htfUptrend and htf4hUptrend and (atSupport or nearHTFSupport) and volumeSpike and strongBuyPressure
+
+// 2. 다이버전스 + 과매도 + 거래량 = 반전 확률 높음
+bool highConfLong2 = bullishDivergence and (rsiOversold or stochOversold) and volumeSpike
+
+// 3. BB 하단 + 과매도 + HTF 상승 = 바운스 확률 높음
+bool highConfLong3 = touchBBLower and stochOversold and htfUptrend and volumeSpike
+
+// 4. EMA 정렬 + ADX 강함 + MTF 거래량 = 추세 지속
+bool highConfLong4 = emaAlignedUp and aboveEMA200 and trendStrong and multiTFVolume
+
+// 높은 확신도 LONG
+bool highConfidenceLong = highConfLong1 or highConfLong2 or highConfLong3 or highConfLong4
+
+// ============================================
+// 시그널
+// ============================================
+
+bool longTrend = ema1 > ema2 or htfUptrend
+bool shortTrend = ema1 < ema2 or htfDowntrend
+
+bool longSignal = longScore >= minScore and longTrend
+bool shortSignal = shortScore >= minScore and shortTrend and not longOnly
+
+bool tradeLong = onlyHighConf ? (longSignal and highConfidenceLong) : longSignal
+bool tradeShort = onlyHighConf ? false : shortSignal
+
+// ============================================
+// 거래 실행
+// ============================================
+
+if tradeLong and strategy.position_size == 0
+    strategy.entry("LONG", strategy.long)
+    strategy.exit("Exit", "LONG", limit=close * (1 + tpPercent/100), stop=close * (1 - slPercent/100))
+
+if tradeShort and strategy.position_size == 0
+    strategy.entry("SHORT", strategy.short)
+    strategy.exit("Exit", "SHORT", limit=close * (1 - tpPercent/100), stop=close * (1 + slPercent/100))
+
+// ============================================
+// 차트 표시
+// ============================================
+
+plot(ema2, color=color.orange, linewidth=2, title="EMA 21")
+plot(ema200, color=color.purple, linewidth=1, title="EMA 200")
+
+// 높은 확신도 시그널 강조
+plotshape(tradeLong and highConfidenceLong, style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.large, title="HIGH CONF LONG")
+plotshape(tradeLong and not highConfidenceLong, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal, title="LONG")
+
+bgcolor(highConfidenceLong and longSignal ? color.new(color.lime, 85) : na)
+
+// 정보 테이블
+var table infoTbl = table.new(position.top_right, 2, 8, bgcolor=color.new(color.white, 10), border_width=1)
+if barstate.islast
+    table.clear(infoTbl, 0, 0, 1, 7)
+    table.cell(infoTbl, 0, 0, "V37 Strategy", text_color=color.white, bgcolor=color.blue)
+    table.cell(infoTbl, 1, 0, timeframe.period, text_color=color.white, bgcolor=color.blue)
+    table.cell(infoTbl, 0, 1, "HTF 1H", text_color=color.black)
+    table.cell(infoTbl, 1, 1, htfUptrend ? "UP" : htfDowntrend ? "DOWN" : "-", text_color=htfUptrend ? color.green : color.red)
+    table.cell(infoTbl, 0, 2, "HTF 4H", text_color=color.black)
+    table.cell(infoTbl, 1, 2, htf4hUptrend ? "UP" : htf4hDowntrend ? "DOWN" : "-", text_color=htf4hUptrend ? color.green : color.red)
+    table.cell(infoTbl, 0, 3, "Vol", text_color=color.black)
+    table.cell(infoTbl, 1, 3, str.tostring(volumeRatio, "#.#") + "x", text_color=volumeSpike ? color.green : color.gray)
+    table.cell(infoTbl, 0, 4, "S/R", text_color=color.black)
+    table.cell(infoTbl, 1, 4, atSupport ? "TOUCH" : nearSupport ? "NEAR" : "-", text_color=atSupport ? color.lime : color.gray)
+    table.cell(infoTbl, 0, 5, "Score", text_color=color.black)
+    table.cell(infoTbl, 1, 5, str.tostring(longScore, "#") + "/" + str.tostring(minScore), text_color=color.blue)
+    table.cell(infoTbl, 0, 6, "HighConf", text_color=color.black)
+    table.cell(infoTbl, 1, 6, highConfidenceLong ? "YES" : "NO", text_color=highConfidenceLong ? color.lime : color.gray)
+    string sigTxt = tradeLong and highConfidenceLong ? "HIGH CONF" : tradeLong ? "LONG" : "WAIT"
+    color sigCol = tradeLong and highConfidenceLong ? color.lime : tradeLong ? color.green : color.gray
+    table.cell(infoTbl, 0, 7, "Signal", text_color=color.white, bgcolor=color.gray)
+    table.cell(infoTbl, 1, 7, sigTxt, text_color=sigCol, bgcolor=color.gray)

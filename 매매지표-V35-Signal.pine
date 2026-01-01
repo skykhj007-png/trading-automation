@@ -1,0 +1,409 @@
+//@version=5
+indicator("V35 Signal Pro", overlay=true, max_labels_count=200, max_lines_count=100)
+
+// ============================================
+// V35 Signal - 시그널 전용 (수동 매매)
+//
+// 목적: 정확한 진입 타이밍 시그널
+// - 거래량 급증 감지
+// - 볼린저밴드 반등/이탈
+// - EMA 정렬 및 크로스
+// - 과매수/과매도 구간
+// ============================================
+
+// ============================================
+// 설정
+// ============================================
+// 시그널 민감도
+signalMode = input.string("보통", title="시그널 민감도", options=["민감", "보통", "엄격"], group="시그널 설정")
+int minScore = signalMode == "민감" ? 12 : signalMode == "보통" ? 15 : 18
+
+// 표시 설정
+showEMA = input.bool(true, title="EMA 표시", group="표시 설정")
+showBB = input.bool(true, title="볼린저밴드 표시", group="표시 설정")
+showVolume = input.bool(true, title="거래량 급증 표시", group="표시 설정")
+showSignalLabel = input.bool(true, title="시그널 라벨", group="표시 설정")
+showInfoTable = input.bool(true, title="정보 테이블", group="표시 설정")
+
+// EMA 설정
+emaFast = input.int(9, title="EMA 빠른선", group="EMA 설정")
+emaMid = input.int(21, title="EMA 중간선", group="EMA 설정")
+emaSlow = input.int(50, title="EMA 느린선", group="EMA 설정")
+ema200Len = input.int(200, title="EMA 200", group="EMA 설정")
+
+// 볼린저밴드 설정
+bbLength = input.int(20, title="BB 길이", group="BB 설정")
+bbMult = input.float(2.0, title="BB 배수", group="BB 설정")
+
+// 거래량 설정
+volThreshold = input.float(1.5, title="거래량 급증 배수", minval=1.0, maxval=5.0, step=0.1, group="거래량 설정")
+volHighThreshold = input.float(2.5, title="거래량 폭증 배수", minval=1.5, maxval=10.0, step=0.5, group="거래량 설정")
+
+// HTF 설정
+useHTF = input.bool(true, title="HTF 확인", group="HTF 설정")
+htfTimeframe = input.timeframe("60", title="HTF 타임프레임", group="HTF 설정")
+
+// ============================================
+// 지표 계산
+// ============================================
+
+// EMA
+ema1 = ta.ema(close, emaFast)
+ema2 = ta.ema(close, emaMid)
+ema3 = ta.ema(close, emaSlow)
+ema200 = ta.ema(close, ema200Len)
+
+// EMA 상태
+bool emaAlignedUp = ema1 > ema2 and ema2 > ema3
+bool emaAlignedDown = ema1 < ema2 and ema2 < ema3
+bool emaCrossUp = ta.crossover(ema1, ema2)
+bool emaCrossDown = ta.crossunder(ema1, ema2)
+bool priceAboveEMA = close > ema2 and close > ema3
+bool priceBelowEMA = close < ema2 and close < ema3
+bool aboveEMA200 = close > ema200
+bool belowEMA200 = close < ema200
+
+// 볼린저밴드
+bbBasis = ta.sma(close, bbLength)
+bbDev = ta.stdev(close, bbLength) * bbMult
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+bbWidth = (bbUpper - bbLower) / bbBasis * 100
+
+bool touchBBLower = low <= bbLower
+bool touchBBUpper = high >= bbUpper
+bool closeBelowBBLower = close < bbLower
+bool closeAboveBBUpper = close > bbUpper
+bool bbSqueeze = bbWidth < ta.sma(bbWidth, 20) * 0.75
+bool priceAboveBBMid = close > bbBasis
+bool priceBelowBBMid = close < bbBasis
+
+// 거래량
+avgVolume = ta.sma(volume, 20)
+volumeRatio = volume / avgVolume
+bool volumeSpike = volumeRatio >= volThreshold
+bool volumeExplosion = volumeRatio >= volHighThreshold
+
+// 매수/매도 압력
+bullVolume = close > open ? volume : volume * (close - low) / math.max(high - low, 0.0001)
+bearVolume = close < open ? volume : volume * (high - close) / math.max(high - low, 0.0001)
+buyPressure = bullVolume / (bullVolume + bearVolume) * 100
+bool strongBuyPressure = buyPressure > 60
+bool strongSellPressure = buyPressure < 40
+
+// RSI
+rsi = ta.rsi(close, 14)
+bool rsiOversold = rsi < 30
+bool rsiOverbought = rsi > 70
+bool rsiBullish = rsi > 45 and rsi < 65
+bool rsiBearish = rsi > 35 and rsi < 55
+
+// Stochastic RSI
+stochRsi = ta.stoch(rsi, rsi, rsi, 14)
+stochK = ta.sma(stochRsi, 3)
+stochD = ta.sma(stochK, 3)
+bool stochOversold = stochK < 20
+bool stochOverbought = stochK > 80
+bool stochCrossUp = ta.crossover(stochK, stochD)
+bool stochCrossDown = ta.crossunder(stochK, stochD)
+bool stochBullish = stochK > stochD
+bool stochBearish = stochK < stochD
+
+// MACD
+[macdLine, signalLine, histogram] = ta.macd(close, 12, 26, 9)
+bool macdBullish = macdLine > signalLine
+bool macdBearish = macdLine < signalLine
+bool macdCrossUp = ta.crossover(macdLine, signalLine)
+bool macdCrossDown = ta.crossunder(macdLine, signalLine)
+bool macdAboveZero = macdLine > 0
+bool macdBelowZero = macdLine < 0
+
+// ADX
+adxLen = 14
+[diPlus, diMinus, adxValue] = ta.dmi(adxLen, adxLen)
+bool trendStrong = adxValue >= 20
+bool trendVeryStrong = adxValue >= 28
+bool bullishDI = diPlus > diMinus
+bool bearishDI = diMinus > diPlus
+
+// 캔들 패턴
+bodySize = math.abs(close - open)
+lowerWick = math.min(close, open) - low
+upperWick = high - math.max(close, open)
+avgBody = ta.sma(bodySize, 14)
+
+bool bullishCandle = close > open and bodySize > avgBody * 0.8
+bool bearishCandle = close < open and bodySize > avgBody * 0.8
+bool strongBullCandle = close > open and bodySize > avgBody * 1.5 and close > high[1]
+bool strongBearCandle = close < open and bodySize > avgBody * 1.5 and close < low[1]
+bool hammer = lowerWick > bodySize * 2 and upperWick < bodySize * 0.5 and close > open
+bool shootingStar = upperWick > bodySize * 2 and lowerWick < bodySize * 0.5 and close < open
+
+// HTF 데이터 (확장)
+[htf_ema9, htf_ema21, htf_close, htf_rsi, htf_volume, htf_avgVol] = request.security(syminfo.tickerid, htfTimeframe, [ta.ema(close, 9), ta.ema(close, 21), close, ta.rsi(close, 14), volume, ta.sma(volume, 20)], lookahead=barmerge.lookahead_off)
+[htf_stochK, htf_bbLower, htf_bbUpper, htf_bbBasis] = request.security(syminfo.tickerid, htfTimeframe, [ta.sma(ta.stoch(ta.rsi(close, 14), ta.rsi(close, 14), ta.rsi(close, 14), 14), 3), ta.sma(close, 20) - 2 * ta.stdev(close, 20), ta.sma(close, 20) + 2 * ta.stdev(close, 20), ta.sma(close, 20)], lookahead=barmerge.lookahead_off)
+
+bool htfUptrend = htf_ema9 > htf_ema21 and htf_close > htf_ema21
+bool htfDowntrend = htf_ema9 < htf_ema21 and htf_close < htf_ema21
+
+// HTF 시그널 계산
+bool htfStochOversold = htf_stochK < 25
+bool htfStochOverbought = htf_stochK > 75
+bool htfRsiBull = htf_rsi > 45 and htf_rsi < 70
+bool htfRsiBear = htf_rsi > 30 and htf_rsi < 55
+bool htfTouchBBLower = htf_close <= htf_bbLower * 1.01
+bool htfTouchBBUpper = htf_close >= htf_bbUpper * 0.99
+bool htfVolumeSpike = htf_volume / htf_avgVol >= 1.3
+
+// HTF LONG 시그널
+bool htfLongSignal = htfUptrend and htfRsiBull and (htfStochOversold or htf_stochK < 40)
+// HTF SHORT 시그널
+bool htfShortSignal = htfDowntrend and htfRsiBear and (htfStochOverbought or htf_stochK > 60)
+
+// MTF 일치 (현재TF + HTF 둘 다 시그널)
+bool mtfLongConfirm = htfLongSignal or (htfUptrend and htfVolumeSpike)
+bool mtfShortConfirm = htfShortSignal or (htfDowntrend and htfVolumeSpike)
+
+// ============================================
+// 점수 시스템 (최대 24점)
+// ============================================
+
+// LONG 점수
+float longScore = 0
+
+// 추세 (8점)
+longScore += emaAlignedUp ? 3 : (ema1 > ema2 ? 1 : 0)
+longScore += priceAboveEMA ? 2 : 0
+longScore += aboveEMA200 ? 2 : 0
+longScore += (useHTF and htfUptrend) ? 1 : 0
+
+// 모멘텀 (8점)
+longScore += stochCrossUp and stochK < 30 ? 3 : (stochOversold ? 2 : stochBullish ? 1 : 0)
+longScore += macdCrossUp ? 2 : (macdBullish and macdAboveZero ? 1 : 0)
+longScore += rsiBullish ? 1 : (rsiOversold ? 2 : 0)
+longScore += (bullishDI and trendStrong) ? 2 : (bullishDI ? 1 : 0)
+
+// 확인 (8점)
+longScore += volumeExplosion and strongBuyPressure ? 3 : (volumeSpike and strongBuyPressure ? 2 : volumeSpike ? 1 : 0)
+longScore += touchBBLower and stochOversold ? 3 : (touchBBLower ? 2 : 0)
+longScore += hammer or strongBullCandle ? 2 : (bullishCandle ? 1 : 0)
+
+// SHORT 점수
+float shortScore = 0
+
+// 추세 (8점)
+shortScore += emaAlignedDown ? 3 : (ema1 < ema2 ? 1 : 0)
+shortScore += priceBelowEMA ? 2 : 0
+shortScore += belowEMA200 ? 2 : 0
+shortScore += (useHTF and htfDowntrend) ? 1 : 0
+
+// 모멘텀 (8점)
+shortScore += stochCrossDown and stochK > 70 ? 3 : (stochOverbought ? 2 : stochBearish ? 1 : 0)
+shortScore += macdCrossDown ? 2 : (macdBearish and macdBelowZero ? 1 : 0)
+shortScore += rsiBearish ? 1 : (rsiOverbought ? 2 : 0)
+shortScore += (bearishDI and trendStrong) ? 2 : (bearishDI ? 1 : 0)
+
+// 확인 (8점)
+shortScore += volumeExplosion and strongSellPressure ? 3 : (volumeSpike and strongSellPressure ? 2 : volumeSpike ? 1 : 0)
+shortScore += touchBBUpper and stochOverbought ? 3 : (touchBBUpper ? 2 : 0)
+shortScore += shootingStar or strongBearCandle ? 2 : (bearishCandle ? 1 : 0)
+
+// ============================================
+// 시그널 조건
+// ============================================
+
+// LONG 조건
+bool longTrend = ema1 > ema2 or emaCrossUp
+bool longMomentum = stochBullish or stochOversold or macdBullish
+bool longVolume = volumeSpike and strongBuyPressure
+bool longBB = touchBBLower or (priceAboveBBMid and close > close[1])
+bool longHTF = useHTF ? htfUptrend : true
+
+bool longSignal = longScore >= minScore and longTrend and longMomentum and longHTF
+
+// MTF 강력 LONG (현재TF + HTF 동시 시그널)
+bool strongLongSignal = longSignal and mtfLongConfirm
+
+// SHORT 조건
+bool shortTrend = ema1 < ema2 or emaCrossDown
+bool shortMomentum = stochBearish or stochOverbought or macdBearish
+bool shortVolume = volumeSpike and strongSellPressure
+bool shortBB = touchBBUpper or (priceBelowBBMid and close < close[1])
+bool shortHTF = useHTF ? htfDowntrend : true
+
+bool shortSignal = shortScore >= minScore and shortTrend and shortMomentum and shortHTF
+
+// MTF 강력 SHORT (현재TF + HTF 동시 시그널)
+bool strongShortSignal = shortSignal and mtfShortConfirm
+
+// ============================================
+// 특수 시그널 (개별 표시)
+// ============================================
+
+// BB 반등 시그널
+bool bbBounceUp = touchBBLower and stochOversold and bullishCandle
+bool bbBounceDown = touchBBUpper and stochOverbought and bearishCandle
+
+// 거래량 폭증 시그널
+bool volumeBuySignal = volumeExplosion and strongBuyPressure and priceAboveEMA
+bool volumeSellSignal = volumeExplosion and strongSellPressure and priceBelowEMA
+
+// EMA 크로스 시그널
+bool emaBullCross = emaCrossUp and stochBullish and volumeSpike
+bool emaBearCross = emaCrossDown and stochBearish and volumeSpike
+
+// ============================================
+// 차트 표시
+// ============================================
+
+// EMA
+plot(showEMA ? ema1 : na, color=color.new(color.yellow, 30), linewidth=1, title="EMA Fast")
+plot(showEMA ? ema2 : na, color=color.new(color.orange, 0), linewidth=2, title="EMA Mid")
+plot(showEMA ? ema3 : na, color=color.new(color.blue, 0), linewidth=2, title="EMA Slow")
+plot(showEMA ? ema200 : na, color=color.new(color.purple, 50), linewidth=1, title="EMA 200")
+
+// 볼린저밴드
+plot(showBB ? bbUpper : na, color=color.new(color.gray, 50), linewidth=1, title="BB Upper")
+plot(showBB ? bbBasis : na, color=color.new(color.gray, 70), linewidth=1, title="BB Basis")
+plot(showBB ? bbLower : na, color=color.new(color.gray, 50), linewidth=1, title="BB Lower")
+
+// BB 채우기
+fill(plot(showBB ? bbUpper : na, display=display.none), plot(showBB ? bbLower : na, display=display.none), color=color.new(color.gray, 92))
+
+// 추세 배경
+bgcolor(emaAlignedUp and trendStrong ? color.new(color.green, 94) : emaAlignedDown and trendStrong ? color.new(color.red, 94) : na)
+
+// 거래량 급증 표시 (배경)
+bgcolor(showVolume and volumeExplosion and strongBuyPressure ? color.new(color.lime, 85) : showVolume and volumeExplosion and strongSellPressure ? color.new(color.fuchsia, 85) : na)
+
+// 메인 시그널 (MTF 강력 시그널은 더 크게)
+plotshape(strongLongSignal, style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.large, title="STRONG LONG")
+plotshape(longSignal and not strongLongSignal, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal, title="LONG Signal")
+plotshape(strongShortSignal, style=shape.triangledown, location=location.abovebar, color=color.fuchsia, size=size.large, title="STRONG SHORT")
+plotshape(shortSignal and not strongShortSignal, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.normal, title="SHORT Signal")
+
+// BB 반등 시그널 (작은 다이아몬드)
+plotshape(bbBounceUp and not longSignal, style=shape.diamond, location=location.belowbar, color=color.new(color.teal, 30), size=size.tiny, title="BB Bounce Up")
+plotshape(bbBounceDown and not shortSignal, style=shape.diamond, location=location.abovebar, color=color.new(color.maroon, 30), size=size.tiny, title="BB Bounce Down")
+
+// 거래량 폭증 표시 (원)
+plotshape(showVolume and volumeExplosion and strongBuyPressure and not longSignal, style=shape.circle, location=location.bottom, color=color.new(color.lime, 50), size=size.tiny, title="Volume Buy")
+plotshape(showVolume and volumeExplosion and strongSellPressure and not shortSignal, style=shape.circle, location=location.top, color=color.new(color.fuchsia, 50), size=size.tiny, title="Volume Sell")
+
+// EMA 크로스 표시 (X)
+plotshape(emaCrossUp, style=shape.xcross, location=location.bottom, color=color.new(color.green, 50), size=size.tiny, title="EMA Cross Up")
+plotshape(emaCrossDown, style=shape.xcross, location=location.top, color=color.new(color.red, 50), size=size.tiny, title="EMA Cross Down")
+
+// 시그널 라벨
+if showSignalLabel and longSignal
+    string mtfTag = strongLongSignal ? "MTF " : ""
+    string lblText = mtfTag + "LONG " + str.tostring(longScore, "#") + "점\n"
+    lblText += "━━━━━━━\n"
+    lblText += "EMA: " + (emaAlignedUp ? "정렬" : ema1 > ema2 ? "상승" : "교차") + "\n"
+    lblText += "BB: " + (touchBBLower ? "하단터치" : priceAboveBBMid ? "중앙위" : "-") + "\n"
+    lblText += "Vol: " + str.tostring(volumeRatio, "#.#") + "x" + (volumeExplosion ? " !!" : volumeSpike ? " !" : "") + "\n"
+    lblText += "RSI: " + str.tostring(rsi, "#") + " K: " + str.tostring(stochK, "#") + "\n"
+    lblText += "HTF: " + (htfLongSignal ? "LONG" : htfUptrend ? "상승" : "-")
+    color lblColor = strongLongSignal ? color.lime : color.green
+    label.new(bar_index, low, lblText, style=label.style_label_up, color=lblColor, textcolor=color.white, size=size.small)
+
+if showSignalLabel and shortSignal
+    string mtfTag = strongShortSignal ? "MTF " : ""
+    string lblText = mtfTag + "SHORT " + str.tostring(shortScore, "#") + "점\n"
+    lblText += "━━━━━━━\n"
+    lblText += "EMA: " + (emaAlignedDown ? "정렬" : ema1 < ema2 ? "하락" : "교차") + "\n"
+    lblText += "BB: " + (touchBBUpper ? "상단터치" : priceBelowBBMid ? "중앙아래" : "-") + "\n"
+    lblText += "Vol: " + str.tostring(volumeRatio, "#.#") + "x" + (volumeExplosion ? " !!" : volumeSpike ? " !" : "") + "\n"
+    lblText += "RSI: " + str.tostring(rsi, "#") + " K: " + str.tostring(stochK, "#") + "\n"
+    lblText += "HTF: " + (htfShortSignal ? "SHORT" : htfDowntrend ? "하락" : "-")
+    color lblColor = strongShortSignal ? color.fuchsia : color.red
+    label.new(bar_index, high, lblText, style=label.style_label_down, color=lblColor, textcolor=color.white, size=size.small)
+
+// ============================================
+// 정보 테이블
+// ============================================
+if showInfoTable
+    var table infoTable = table.new(position.top_right, 2, 12, bgcolor=color.new(color.white, 10), border_width=1)
+
+    string tfInfo = timeframe.period
+    string trendText = emaAlignedUp ? "UP" : emaAlignedDown ? "DOWN" : ema1 > ema2 ? "up" : ema1 < ema2 ? "down" : "FLAT"
+    color trendColor = emaAlignedUp ? color.green : emaAlignedDown ? color.red : color.gray
+    string htfText = htfUptrend ? "UP" : htfDowntrend ? "DOWN" : "FLAT"
+    color htfColor = htfUptrend ? color.green : htfDowntrend ? color.red : color.gray
+    string signalText = strongLongSignal ? "MTF LONG " + str.tostring(longScore, "#") : longSignal ? "LONG " + str.tostring(longScore, "#") : strongShortSignal ? "MTF SHORT " + str.tostring(shortScore, "#") : shortSignal ? "SHORT " + str.tostring(shortScore, "#") : "WAIT"
+    color signalColor = strongLongSignal ? color.lime : longSignal ? color.green : strongShortSignal ? color.fuchsia : shortSignal ? color.red : color.gray
+    string htfSignalText = htfLongSignal ? "LONG" : htfShortSignal ? "SHORT" : htfUptrend ? "상승" : htfDowntrend ? "하락" : "횡보"
+    color htfSignalColor = htfLongSignal ? color.lime : htfShortSignal ? color.fuchsia : htfUptrend ? color.green : htfDowntrend ? color.red : color.gray
+
+    if barstate.islast
+        table.clear(infoTable, 0, 0, 1, 11)
+        table.cell(infoTable, 0, 0, "V35 Signal", text_color=color.white, text_size=size.small, bgcolor=color.new(color.teal, 20))
+        table.cell(infoTable, 1, 0, tfInfo, text_color=color.white, text_size=size.small, bgcolor=color.new(color.teal, 20))
+
+        table.cell(infoTable, 0, 1, "추세", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 1, trendText, text_color=trendColor, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 2, "HTF " + htfTimeframe, text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 2, htfSignalText, text_color=htfSignalColor, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 3, "ADX", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 3, str.tostring(adxValue, "#") + (trendVeryStrong ? " !!" : trendStrong ? " !" : ""), text_color=trendStrong ? color.green : color.gray, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 4, "RSI", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 4, str.tostring(rsi, "#"), text_color=rsiOversold ? color.green : rsiOverbought ? color.red : color.gray, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 5, "Stoch K", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 5, str.tostring(stochK, "#"), text_color=stochOversold ? color.green : stochOverbought ? color.red : color.gray, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 6, "MACD", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 6, macdBullish ? "BULL" : "BEAR", text_color=macdBullish ? color.green : color.red, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 7, "거래량", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 7, str.tostring(volumeRatio, "#.#") + "x" + (volumeExplosion ? " !!" : volumeSpike ? " !" : ""), text_color=volumeExplosion ? color.lime : volumeSpike ? color.green : color.gray, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 8, "매수압력", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 8, str.tostring(buyPressure, "#") + "%", text_color=strongBuyPressure ? color.green : strongSellPressure ? color.red : color.gray, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 9, "BB", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 9, touchBBLower ? "하단" : touchBBUpper ? "상단" : priceAboveBBMid ? "중앙↑" : "중앙↓", text_color=touchBBLower ? color.green : touchBBUpper ? color.red : color.gray, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 10, "점수", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTable, 1, 10, "L:" + str.tostring(longScore, "#") + " S:" + str.tostring(shortScore, "#") + " (/" + str.tostring(minScore) + ")", text_color=color.blue, text_size=size.tiny)
+
+        table.cell(infoTable, 0, 11, "시그널", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 30))
+        table.cell(infoTable, 1, 11, signalText, text_color=signalColor, text_size=size.small, bgcolor=color.new(color.gray, 30))
+
+// ============================================
+// 알림
+// ============================================
+if longSignal
+    string mtfPrefix = strongLongSignal ? "MTF " : ""
+    string alertMsg = mtfPrefix + "LONG 시그널 " + str.tostring(longScore, "#") + "점\n"
+    alertMsg += "━━━━━━━━━━━━━━━━\n"
+    alertMsg += syminfo.basecurrency + "/USDT " + timeframe.period + "\n"
+    alertMsg += "━━━━━━━━━━━━━━━━\n"
+    alertMsg += "현재가: $" + str.tostring(close, "#.##") + "\n\n"
+    alertMsg += "EMA: " + (emaAlignedUp ? "정렬 상승" : ema1 > ema2 ? "상승 중" : "교차") + "\n"
+    alertMsg += "BB: " + (touchBBLower ? "하단 터치" : "중앙 위") + "\n"
+    alertMsg += "거래량: " + str.tostring(volumeRatio, "#.#") + "x" + (volumeExplosion ? " (폭증)" : volumeSpike ? " (급증)" : "") + "\n"
+    alertMsg += "RSI: " + str.tostring(rsi, "#") + " | StochK: " + str.tostring(stochK, "#") + "\n"
+    alertMsg += "MACD: " + (macdBullish ? "상승" : "하락") + "\n"
+    alertMsg += "ADX: " + str.tostring(adxValue, "#") + (trendStrong ? " (추세 강함)" : "") + "\n"
+    alertMsg += "HTF " + htfTimeframe + ": " + (htfUptrend ? "상승" : htfDowntrend ? "하락" : "횡보")
+    alert(alertMsg, freq=alert.freq_once_per_bar)
+
+if shortSignal
+    string mtfPrefix = strongShortSignal ? "MTF " : ""
+    string alertMsg = mtfPrefix + "SHORT 시그널 " + str.tostring(shortScore, "#") + "점\n"
+    alertMsg += "━━━━━━━━━━━━━━━━\n"
+    alertMsg += syminfo.basecurrency + "/USDT " + timeframe.period + "\n"
+    alertMsg += "━━━━━━━━━━━━━━━━\n"
+    alertMsg += "현재가: $" + str.tostring(close, "#.##") + "\n\n"
+    alertMsg += "EMA: " + (emaAlignedDown ? "정렬 하락" : ema1 < ema2 ? "하락 중" : "교차") + "\n"
+    alertMsg += "BB: " + (touchBBUpper ? "상단 터치" : "중앙 아래") + "\n"
+    alertMsg += "거래량: " + str.tostring(volumeRatio, "#.#") + "x" + (volumeExplosion ? " (폭증)" : volumeSpike ? " (급증)" : "") + "\n"
+    alertMsg += "RSI: " + str.tostring(rsi, "#") + " | StochK: " + str.tostring(stochK, "#") + "\n"
+    alertMsg += "MACD: " + (macdBullish ? "상승" : "하락") + "\n"
+    alertMsg += "ADX: " + str.tostring(adxValue, "#") + (trendStrong ? " (추세 강함)" : "") + "\n"
+    alertMsg += "HTF " + htfTimeframe + ": " + (htfUptrend ? "상승" : htfDowntrend ? "하락" : "횡보")
+    alert(alertMsg, freq=alert.freq_once_per_bar)

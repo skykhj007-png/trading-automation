@@ -1,0 +1,118 @@
+//@version=5
+strategy("V38 MTF Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.04, slippage=1)
+
+// ============================================
+// V38 Strategy - 3일 MTF 백테스트
+// ============================================
+
+longOnly = input.bool(true, title="LONG만 거래", group="거래 설정")
+onlyStrong = input.bool(true, title="STRONG 시그널만", group="거래 설정")
+tpPercent = input.float(1.0, title="TP %", minval=0.1, maxval=5.0, step=0.1, group="거래 설정")
+slPercent = input.float(0.5, title="SL %", minval=0.1, maxval=3.0, step=0.1, group="거래 설정")
+volThreshold = input.float(1.5, title="거래량 배수", minval=1.0, maxval=5.0, step=0.1, group="설정")
+
+// 기본 지표
+avgVol = ta.sma(volume, 20)
+volRatio = volume / avgVol
+volSpike = volRatio >= volThreshold
+
+bullVol = close > open ? volume : volume * (close - low) / math.max(high - low, 0.0001)
+bearVol = close < open ? volume : volume * (high - close) / math.max(high - low, 0.0001)
+buyPressure = bullVol / (bullVol + bearVol) * 100
+
+// 5분봉
+tf5m_ema9 = request.security(syminfo.tickerid, "5", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+tf5m_ema21 = request.security(syminfo.tickerid, "5", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+tf5m_close = request.security(syminfo.tickerid, "5", close, lookahead=barmerge.lookahead_off)
+tf5m_vol = request.security(syminfo.tickerid, "5", volume, lookahead=barmerge.lookahead_off)
+tf5m_avgVol = request.security(syminfo.tickerid, "5", ta.sma(volume, 20), lookahead=barmerge.lookahead_off)
+bool tf5m_uptrend = tf5m_ema9 > tf5m_ema21 and tf5m_close > tf5m_ema21
+bool tf5m_volSpike = tf5m_vol / math.max(tf5m_avgVol, 1) >= volThreshold
+
+// 15분봉
+tf15m_ema9 = request.security(syminfo.tickerid, "15", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+tf15m_ema21 = request.security(syminfo.tickerid, "15", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+tf15m_close = request.security(syminfo.tickerid, "15", close, lookahead=barmerge.lookahead_off)
+tf15m_vol = request.security(syminfo.tickerid, "15", volume, lookahead=barmerge.lookahead_off)
+tf15m_avgVol = request.security(syminfo.tickerid, "15", ta.sma(volume, 20), lookahead=barmerge.lookahead_off)
+bool tf15m_uptrend = tf15m_ema9 > tf15m_ema21 and tf15m_close > tf15m_ema21
+bool tf15m_volSpike = tf15m_vol / math.max(tf15m_avgVol, 1) >= volThreshold
+
+// 1시간봉
+tf1h_ema9 = request.security(syminfo.tickerid, "60", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+tf1h_ema21 = request.security(syminfo.tickerid, "60", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+tf1h_close = request.security(syminfo.tickerid, "60", close, lookahead=barmerge.lookahead_off)
+tf1h_vol = request.security(syminfo.tickerid, "60", volume, lookahead=barmerge.lookahead_off)
+tf1h_avgVol = request.security(syminfo.tickerid, "60", ta.sma(volume, 20), lookahead=barmerge.lookahead_off)
+tf1h_high3d = request.security(syminfo.tickerid, "60", ta.highest(high, 72), lookahead=barmerge.lookahead_off)
+tf1h_low3d = request.security(syminfo.tickerid, "60", ta.lowest(low, 72), lookahead=barmerge.lookahead_off)
+bool tf1h_uptrend = tf1h_ema9 > tf1h_ema21 and tf1h_close > tf1h_ema21
+bool tf1h_volSpike = tf1h_vol / math.max(tf1h_avgVol, 1) >= volThreshold
+
+// 4시간봉
+tf4h_ema9 = request.security(syminfo.tickerid, "240", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+tf4h_ema21 = request.security(syminfo.tickerid, "240", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+tf4h_close = request.security(syminfo.tickerid, "240", close, lookahead=barmerge.lookahead_off)
+tf4h_vol = request.security(syminfo.tickerid, "240", volume, lookahead=barmerge.lookahead_off)
+tf4h_avgVol = request.security(syminfo.tickerid, "240", ta.sma(volume, 20), lookahead=barmerge.lookahead_off)
+tf4h_high3d = request.security(syminfo.tickerid, "240", ta.highest(high, 18), lookahead=barmerge.lookahead_off)
+tf4h_low3d = request.security(syminfo.tickerid, "240", ta.lowest(low, 18), lookahead=barmerge.lookahead_off)
+bool tf4h_uptrend = tf4h_ema9 > tf4h_ema21 and tf4h_close > tf4h_ema21
+bool tf4h_volSpike = tf4h_vol / math.max(tf4h_avgVol, 1) >= volThreshold
+
+// 일봉
+tfD_ema9 = request.security(syminfo.tickerid, "D", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+tfD_ema21 = request.security(syminfo.tickerid, "D", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+tfD_close = request.security(syminfo.tickerid, "D", close, lookahead=barmerge.lookahead_off)
+tfD_high3d = request.security(syminfo.tickerid, "D", ta.highest(high, 3), lookahead=barmerge.lookahead_off)
+tfD_low3d = request.security(syminfo.tickerid, "D", ta.lowest(low, 3), lookahead=barmerge.lookahead_off)
+bool tfD_uptrend = tfD_ema9 > tfD_ema21 and tfD_close > tfD_ema21
+
+// 3일 지지/저항
+float resistance3d = math.max(tf1h_high3d, tf4h_high3d, tfD_high3d)
+float support3d = math.min(tf1h_low3d, tf4h_low3d, tfD_low3d)
+float pricePosition = (close - support3d) / math.max(resistance3d - support3d, 0.0001) * 100
+
+bool nearSupport3d = pricePosition < 15
+bool atSupport3d = pricePosition < 5
+
+// 카운트
+int uptrendCount = (tf5m_uptrend ? 1 : 0) + (tf15m_uptrend ? 1 : 0) + (tf1h_uptrend ? 1 : 0) + (tf4h_uptrend ? 1 : 0) + (tfD_uptrend ? 1 : 0)
+int volSpikeCount = (volSpike ? 1 : 0) + (tf5m_volSpike ? 1 : 0) + (tf15m_volSpike ? 1 : 0) + (tf1h_volSpike ? 1 : 0) + (tf4h_volSpike ? 1 : 0)
+
+// 등급
+bool gradeS = uptrendCount >= 4 and atSupport3d and volSpikeCount >= 2 and buyPressure > 55
+bool gradeA = uptrendCount >= 3 and nearSupport3d and volSpikeCount >= 1 and buyPressure > 50
+bool gradeB = uptrendCount >= 2 and tf1h_uptrend and volSpike
+
+// 시그널
+bool strongLong = gradeS or (gradeA and pricePosition < 10)
+bool normalLong = gradeB and not strongLong
+
+bool tradeLong = onlyStrong ? strongLong : (strongLong or normalLong)
+
+// 거래
+if tradeLong and strategy.position_size == 0
+    strategy.entry("LONG", strategy.long)
+    strategy.exit("Exit", "LONG", limit=close * (1 + tpPercent/100), stop=close * (1 - slPercent/100))
+
+// 표시
+plot(ta.ema(close, 21), color=color.orange, linewidth=2)
+plotshape(strongLong, style=shape.triangleup, location=location.belowbar, color=color.yellow, size=size.large, title="STRONG")
+plotshape(normalLong, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal, title="LONG")
+bgcolor(strongLong ? color.new(color.yellow, 80) : na)
+
+// 테이블
+var table tbl = table.new(position.top_right, 2, 5, bgcolor=color.new(color.white, 10))
+if barstate.islast
+    table.cell(tbl, 0, 0, "V38", text_color=color.white, bgcolor=color.blue)
+    table.cell(tbl, 1, 0, timeframe.period, text_color=color.white, bgcolor=color.blue)
+    table.cell(tbl, 0, 1, "TF일치", text_color=color.black)
+    table.cell(tbl, 1, 1, str.tostring(uptrendCount) + "/5", text_color=uptrendCount >= 3 ? color.green : color.gray)
+    table.cell(tbl, 0, 2, "위치", text_color=color.black)
+    table.cell(tbl, 1, 2, str.tostring(pricePosition, "#") + "%", text_color=nearSupport3d ? color.green : color.gray)
+    table.cell(tbl, 0, 3, "Vol", text_color=color.black)
+    table.cell(tbl, 1, 3, str.tostring(volSpikeCount) + "/5", text_color=volSpikeCount >= 2 ? color.green : color.gray)
+    string sig = strongLong ? "STRONG" : normalLong ? "LONG" : "WAIT"
+    table.cell(tbl, 0, 4, "Signal", text_color=color.white, bgcolor=color.gray)
+    table.cell(tbl, 1, 4, sig, text_color=strongLong ? color.yellow : normalLong ? color.green : color.gray, bgcolor=color.gray)
