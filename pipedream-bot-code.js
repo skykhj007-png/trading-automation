@@ -24,7 +24,7 @@ export default defineComponent({
       if (newMember && !newMember.is_bot) {
         const welcomeText = `👋 환영합니다, ${newMember.first_name}님!
 
-🤖 V38 Trading System
+🤖 V39 Trading System
 
 ⚠️ 본 서비스는 참고용이며 투자권유가 아닙니다.
 
@@ -32,7 +32,7 @@ export default defineComponent({
 비트겟 가입만 하면 모두 무료!
 
 ✅ 텔레그램 실시간 AI 분석&대화방 입장
-✅ TradingView V38 지표 (평생)
+✅ TradingView V39 지표 (평생)
 
 ━━━━━━━━━━━━━━━━
 
@@ -96,7 +96,7 @@ TPpgMe6JxtudoEdDegkyKUaBUyAWRKti12
       // ============================================
 
       if (command === '/start' || command === '/가입' || command === '/info') {
-        responseText = `🤖 V38 Trading System
+        responseText = `🤖 V39 Trading System
 
 ⚠️ 본 서비스는 참고용이며 투자권유가 아닙니다.
 
@@ -104,7 +104,7 @@ TPpgMe6JxtudoEdDegkyKUaBUyAWRKti12
 비트겟 가입만 하면 모두 무료!
 
 ✅ 텔레그램 실시간 AI 분석&대화방 입장
-✅ TradingView V38 지표 (평생)
+✅ TradingView V39 지표 (평생)
 
 ━━━━━━━━━━━━━━━━
 
@@ -274,7 +274,7 @@ TPpgMe6JxtudoEdDegkyKUaBUyAWRKti12
                 return price.toFixed(2);
               };
 
-              const prompt = `V38 MTF Confluence Pro 기준 암호화폐 분석:
+              const prompt = `V39 MTF Confluence Pro 기준 암호화폐 분석:
 
 코인: ${coinSymbol} (${coinName})
 타임프레임: ${selected.tf}
@@ -345,7 +345,7 @@ ${ema9 > ema21 ? '🟢 상승 추세' : '🔴 하락 추세'}
       // ============================================
 
       else if (command === '/guide' || command === '/가이드' || command === '/설명서') {
-        responseText = `📚 V38 MTF Confluence Pro
+        responseText = `📚 V39 MTF Confluence Pro
 
 ━━━━━━━━━━━━━━━━
 
@@ -402,7 +402,7 @@ ${ema9 > ema21 ? '🟢 상승 추세' : '🔴 하락 추세'}
       // ============================================
 
       else if (command === '/alert' || command === '/알림') {
-        responseText = `🔔 V38 알림 설정 가이드
+        responseText = `🔔 V39 알림 설정 가이드
 
 ━━━━━━━━━━━━━━━━
 
@@ -412,7 +412,7 @@ ${ema9 > ema21 ? '🟢 상승 추세' : '🔴 하락 추세'}
    또는 단축키: Alt + A
 
 2️⃣ 조건 설정:
-   • 첫 번째: V38 MTF Confluence Pro
+   • 첫 번째: V39 MTF Confluence Pro
    • 두 번째: "모든 alert() 함수 호출"
 
 ━━━━━━━━━━━━━━━━
@@ -515,7 +515,7 @@ ${ema9 > ema21 ? '🟢 상승 추세' : '🔴 하락 추세'}
       // ============================================
 
       else if (command === '/grade' || command === '/등급') {
-        responseText = `📊 V38 등급 시스템
+        responseText = `📊 V39 등급 시스템
 
 ━━━━━━━━━━━━━━━━
 
@@ -546,21 +546,43 @@ ${ema9 > ema21 ? '🟢 상승 추세' : '🔴 하락 추세'}
       // ============================================
 
       else if (command === '/smc') {
-        responseText = `🧠 SMC (Smart Money)
+        responseText = `🧠 V39 SMC (Smart Money)
 
 ━━━━━━━━━━━━━━━━
 
-📦 Order Block
+📊 시장 구조 라벨
+
+• HH (초록) = Higher High 고점갱신
+• HL (초록) = Higher Low 저점상승
+• LH (빨강) = Lower High 고점하락
+• LL (빨강) = Lower Low 저점이탈
+
+━━━━━━━━━━━━━━━━
+
+🔄 BOS / CHoCH
+
+• BOS+ = 상승 구조 돌파 (청록박스)
+• BOS- = 하락 구조 돌파 (분홍박스)
+• CHoCH+ = 하락→상승 전환 (라임)
+• CHoCH- = 상승→하락 전환 (분홍)
+
+━━━━━━━━━━━━━━━━
+
+📈 EMA 각도 색상
+
+🟢 초록 = 강한 상승
+🟡 노랑 = 약한 상승
+🟠 주황 = 횡보
+🔴 빨강 = 하락
+
+━━━━━━━━━━━━━━━━
+
+📦 Order Block / FVG
+
 • 초록 박스: 매수 영역
 • 빨강 박스: 매도 영역
-
-📊 FVG (갭)
 • 청록 점선: 상승 갭
 • 적갈색 점선: 하락 갭
-
-🔄 구조 변화
-• BOS+/- : 추세 지속
-• CHoCH+/- : 추세 전환!
 
 ━━━━━━━━━━━━━━━━
 
@@ -582,7 +604,7 @@ ${ema9 > ema21 ? '🟢 상승 추세' : '🔴 하락 추세'}
       // ============================================
 
       else if (command === '/settings' || command === '/설정') {
-        responseText = `⚙️ V38 권장 설정
+        responseText = `⚙️ V39 권장 설정
 
 ━━━━━━━━━━━━━━━━
 
@@ -610,7 +632,7 @@ ${ema9 > ema21 ? '🟢 상승 추세' : '🔴 하락 추세'}
       // ============================================
 
       else if (command === '/help' || command === '/도움말') {
-        responseText = `🤖 V38 Premium 명령어
+        responseText = `🤖 V39 Premium 명령어
 
 ━━━━━━━━━━━━━━━━
 
@@ -627,19 +649,19 @@ ${ema9 > ema21 ? '🟢 상승 추세' : '🔴 하락 추세'}
 
 ━━━━━━━━━━━━━━━━
 
-📚 V38 지표 가이드
+📚 V39 지표 가이드
 
 /가이드 - 핵심 가이드
 /알림 - 알림 설정 방법 ⭐
 /체크리스트 - 진입 조건
 /청산 - 청산 가이드
 /등급 - 등급 설명
-/smc - SMC 설명
+/smc - SMC/구조 설명 ⭐
 /설정 - 권장 설정
 
 ━━━━━━━━━━━━━━━━
 
-📢 무료 시그널: @V38_Signal
+📢 무료 시그널: @V39_Signal
 
 💬 문의: @pointting`;
       }
