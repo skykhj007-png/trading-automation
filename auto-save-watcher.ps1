@@ -1,7 +1,7 @@
 # V39 Auto Save Watcher
 # Run: .\auto-save-watcher.ps1
 
-$folder = "C:\Users\skykh\trading-automation"
+$folder = "C:\Users\kim\trading-automation"
 $debounceSeconds = 3
 
 Write-Host "========================================" -ForegroundColor Cyan
