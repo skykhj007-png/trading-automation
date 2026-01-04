@@ -53,13 +53,13 @@ pivotRight = input.int(2, title="피봇 우측 바", minval=1, maxval=10, group=
 // SMC (Smart Money Concepts) 설정
 // ============================================
 showSMC = input.bool(true, title="SMC 기능 활성화", group="SMC 설정") and showVisuals
-showOrderBlocks = input.bool(true, title="Order Blocks 표시", group="SMC 설정") and not isMinimalMode
-showFVG = input.bool(true, title="Fair Value Gaps 표시", group="SMC 설정") and not isMinimalMode
-showBOS = input.bool(true, title="BOS/CHoCH 표시", group="SMC 설정")  // 최소화 모드에서도 표시
-showBOSBox = input.bool(true, title="BOS 박스 표시", group="SMC 설정")  // 최소화 모드에서도 표시
-showStructureLabels = input.bool(true, title="구조 라벨 (HH/HL/LH/LL)", group="SMC 설정")  // 최소화 모드에서도 표시
-showSmartTrail = input.bool(true, title="Smart Trail 표시", group="SMC 설정")  // 최소화 모드에서도 표시
-showLiquidityLevels = input.bool(true, title="Liquidity Levels 표시", group="SMC 설정") and not isMinimalMode
+showOrderBlocks = input.bool(false, title="Order Blocks 표시", group="SMC 설정") and not isMinimalMode  // 기본값 OFF (깔끔하게)
+showFVG = input.bool(false, title="Fair Value Gaps 표시", group="SMC 설정")  // 기본값 OFF (깔끔하게)
+showBOS = input.bool(false, title="BOS/CHoCH 표시", group="SMC 설정")  // 기본값 OFF (깔끔하게)
+showBOSBox = input.bool(false, title="BOS 박스 표시", group="SMC 설정")  // 기본값 OFF (깔끔하게)
+showStructureLabels = input.bool(false, title="구조 라벨 (HH/HL/LH/LL)", group="SMC 설정")  // 기본값 OFF (깔끔하게)
+showSmartTrail = input.bool(true, title="Smart Trail 표시", group="SMC 설정")  // 핵심 - 항상 표시
+showLiquidityLevels = input.bool(false, title="Liquidity Levels 표시", group="SMC 설정") and not isMinimalMode  // 기본값 OFF
 showEMAAngle = input.bool(true, title="EMA 각도 색상", group="SMC 설정")  // EMA 각도별 색상
 
 obLookback = input.int(20, title="Order Block 탐색 범위", minval=5, maxval=100, group="SMC 설정")
@@ -67,6 +67,26 @@ fvgMinSize = input.float(0.1, title="FVG 최소 크기 (%)", minval=0.01, maxval
 swingLength = input.int(10, title="Swing 탐색 길이", minval=3, maxval=50, group="SMC 설정")
 emaAngleLength = input.int(14, title="EMA 각도 길이", minval=5, maxval=50, group="SMC 설정")
 emaAngleThreshold = input.float(1.0, title="EMA 각도 임계값", minval=0.1, maxval=5.0, step=0.1, group="SMC 설정")
+
+// 고래 감지 설정
+showWhale = input.bool(true, title="고래 매수/매도 표시", group="SMC 설정")
+whaleVolMultiplier = input.float(3.0, title="고래 거래량 배수", minval=2.0, maxval=10.0, step=0.5, group="SMC 설정")
+whalePriceMove = input.float(0.5, title="고래 가격 변동 (%)", minval=0.1, maxval=2.0, step=0.1, group="SMC 설정")
+
+// ============================================
+// 심리적 매매 구간 설정
+// ============================================
+showPsychLevels = input.bool(true, title="심리적 구간 표시", group="심리적 구간")
+showRoundNumbers = input.bool(true, title="라운드 넘버 표시", group="심리적 구간")
+showFearGreed = input.bool(true, title="공포/탐욕 지표", group="심리적 구간")
+showVolProfile = input.bool(true, title="볼륨 집중 구간", group="심리적 구간")
+showFibLevels = input.bool(false, title="피보나치 레벨", group="심리적 구간")
+showKeyLevels = input.bool(true, title="주요 고점/저점 표시", group="심리적 구간")
+showPOC = input.bool(true, title="POC (거래량 집중) 표시", group="심리적 구간")
+roundNumInterval = input.int(5000, title="라운드 넘버 간격 ($)", minval=100, maxval=50000, step=100, group="심리적 구간")
+fibLookback = input.int(100, title="피보나치 탐색 범위", minval=20, maxval=500, group="심리적 구간")
+keyLevelLookback = input.int(50, title="주요 레벨 탐색 범위", minval=20, maxval=200, group="심리적 구간")
+pocLookback = input.int(50, title="POC 탐색 범위", minval=20, maxval=200, group="심리적 구간")
 
 // ============================================
 // 현재 TF 기본 지표
@@ -140,6 +160,35 @@ bearVol = close < open ? volume : volume * (high - close) / math.max(high - low,
 buyPressure = bullVol / (bullVol + bearVol) * 100
 bool strongBuyPressure = buyPressure > 55
 bool strongSellPressure = buyPressure < 45
+
+// ============================================
+// 고래 매수/매도 감지
+// ============================================
+float priceChangePercent = math.abs(close - open) / open * 100
+bool isWhaleVolume = volRatio >= whaleVolMultiplier
+bool isWhalePriceMove = priceChangePercent >= whalePriceMove
+bool isBullishCandle = close > open
+bool isBearishCandle = close < open
+
+// 고래 매수: 대량 거래량 + 큰 양봉 + 매수압력
+bool whaleBuy = isWhaleVolume and isWhalePriceMove and isBullishCandle and buyPressure > 55
+
+// 고래 매도: 대량 거래량 + 큰 음봉 + 매도압력
+bool whaleSell = isWhaleVolume and isWhalePriceMove and isBearishCandle and buyPressure < 45
+
+// 거래량 등급별 분류 (해양생물 등급)
+string whaleStrength = volRatio >= 10.0 ? "🐋WHALE" :
+                       volRatio >= 7.0 ? "🦈SHARK" :
+                       volRatio >= 5.0 ? "🐬DOLPHIN" :
+                       volRatio >= 3.0 ? "🐟FISH" :
+                       volRatio >= 2.0 ? "🦀CRAB" : "🦐SHRIMP"
+
+// 등급별 한글명
+string whaleKorean = volRatio >= 10.0 ? "고래" :
+                     volRatio >= 7.0 ? "상어" :
+                     volRatio >= 5.0 ? "돌고래" :
+                     volRatio >= 3.0 ? "물고기" :
+                     volRatio >= 2.0 ? "게" : "새우"
 
 // 피봇/다이버전스
 float pivotHigh = ta.pivothigh(high, pivotLeft, pivotRight)
@@ -602,27 +651,27 @@ bool highConfidenceLong = highConf1 or highConf2 or highConf3 or highConf4
 string confReason = highConf1 ? "HTF+SR+VOL" : highConf2 ? "DIV+OVERSOLD" : highConf3 ? "BB+OVERSOLD" : highConf4 ? "TREND+VOL" : "-"
 
 // ============================================
-// 신호 등급 시스템
+// 신호 등급 시스템 (30% 강화)
 // ============================================
 
-// S등급: 모든 조건 완벽 (5TF 상승 + 지지선 + 거래량 + 고확신)
-bool gradeS = uptrendCount >= 4 and atSupport3d and volSpikeCount >= 2 and buyPressure > 55 and highConfidenceLong
+// S등급: 3TF 상승 + 지지근처 + 거래량 + 고확신 + 매수압력
+bool gradeS = uptrendCount >= 3 and nearSupport3d and volSpikeCount >= 1 and highConfidenceLong and buyPressure > 52
 
-// A등급: 대부분 조건 충족 (4TF 상승 + 지지근처 + 거래량)
-bool gradeA = uptrendCount >= 3 and nearSupport3d and volSpikeCount >= 1 and buyPressure > 50
+// A등급: 2TF 상승 + 거래량 + 매수압력
+bool gradeA = uptrendCount >= 2 and volSpikeCount >= 1 and buyPressure > 48
 
-// B등급: 기본 조건 충족 (3TF 상승 + 거래량)
-bool gradeB = uptrendCount >= 2 and tf1h_uptrend and volSpike
+// B등급: 2TF 상승 + 1H 상승
+bool gradeB = uptrendCount >= 2 and tf1h_uptrend
 
 // 현재 등급 (점수 기반으로도 표시)
 string currentGrade = gradeS ? "S" : longScore >= 22 ? "A+" : gradeA ? "A" : longScore >= 16 ? "B+" : gradeB ? "B" : "C"
 
 // ============================================
-// 시그널 조건
+// LONG 시그널 조건
 // ============================================
 
-// 강력 LONG: S등급 또는 (A등급 + 과매도)
-bool strongLong = gradeS or (gradeA and oversoldCount >= 2)
+// 강력 LONG: S등급 또는 A등급
+bool strongLong = gradeS or gradeA
 
 // 일반 LONG: B등급 이상
 bool normalLong = gradeB and not strongLong
@@ -633,8 +682,23 @@ bool superLong = strongLong and smcBullish and smartTrailUp and (isBullishOB or 
 // 대기: C등급
 bool waitSignal = not strongLong and not normalLong
 
-// SHORT (선물 모드에서만 표시)
-bool strongShort = showShortSignals and downtrendCount >= 4 and atResistance3d and volSpikeCount >= 2
+// ============================================
+// SHORT 등급 시스템 (30% 강화)
+// ============================================
+
+// SHORT S등급: 3TF 하락 + 저항근처 + 거래량 + 매도압력
+bool gradeS_short = downtrendCount >= 3 and nearResistance3d and volSpikeCount >= 1 and buyPressure < 48
+
+// SHORT A등급: 2TF 하락 + 거래량 + 매도압력
+bool gradeA_short = downtrendCount >= 2 and volSpikeCount >= 1 and buyPressure < 52
+
+// SHORT B등급: 2TF 하락 + 1H 하락
+bool gradeB_short = downtrendCount >= 2 and not tf1h_uptrend
+
+// SHORT 시그널
+bool superShort = showShortSignals and gradeS_short and smcBearish and not smartTrailUp
+bool strongShort = showShortSignals and (gradeS_short or gradeA_short) and not superShort
+bool normalShort = showShortSignals and gradeB_short and not strongShort and not superShort
 
 // 최종 등급 업데이트
 string finalGrade = superLong ? "SUPER" : currentGrade
@@ -649,13 +713,153 @@ bool trailFlipToShort = prevSmartTrailUp and not smartTrailUp  // LONG → SHORT
 bool trailFlipToLong = not prevSmartTrailUp and smartTrailUp   // SHORT → LONG 전환
 prevSmartTrailUp := smartTrailUp
 
-// 청산 시그널 (Smart Trail이 SHORT로 전환될 때)
-bool exitLongSignal = trailFlipToShort and (longScore < 15 or not tf1h_uptrend)
+// 청산 시그널 (더 엄격한 조건: Trail전환 + 점수낮음 + 1H하락)
+bool exitLongSignal = trailFlipToShort and longScore < 12 and not tf1h_uptrend
+
+// EXIT SHORT 시그널
+bool exitShortSignal = trailFlipToLong and not tf1h_uptrend == false
 
 // 시그널 모드에 따른 필터링
 bool showSuperLong = superLong and (signalMode == "전체" or signalMode == "STRONG 이상" or signalMode == "SUPER만")
 bool showStrongLong = strongLong and not superLong and (signalMode == "전체" or signalMode == "STRONG 이상")
 bool showNormalLong = normalLong and signalMode == "전체"
+
+// ============================================
+// 심리적 매매 구간 분석
+// ============================================
+
+// 1. 라운드 넘버 (Round Numbers)
+float roundBelow = math.floor(close / roundNumInterval) * roundNumInterval
+float roundAbove = roundBelow + roundNumInterval
+float distToRoundBelow = math.abs(close - roundBelow) / close * 100
+float distToRoundAbove = math.abs(roundAbove - close) / close * 100
+bool nearRoundBelow = distToRoundBelow < 1.0  // 1% 이내
+bool nearRoundAbove = distToRoundAbove < 1.0
+bool atRoundNumber = distToRoundBelow < 0.3 or distToRoundAbove < 0.3  // 0.3% 이내
+
+// 2. 공포/탐욕 지표 (Fear & Greed)
+// RSI 기반 + 가격 편차 + 볼륨
+float ema20 = ta.ema(close, 20)
+float priceDeviation = (close - ema20) / ema20 * 100  // EMA20 대비 편차
+float rsiNorm = (rsi - 50) / 50  // -1 ~ +1 정규화
+float volNorm = math.min((volRatio - 1) / 4, 1)  // 0 ~ 1 정규화
+
+// 공포/탐욕 점수 (-100 ~ +100)
+float fearGreedRaw = (rsiNorm * 40) + (priceDeviation * 3) + (volNorm * 20 * (close > ema20 ? 1 : -1))
+float fearGreedScore = math.max(-100, math.min(100, fearGreedRaw))
+
+// 공포/탐욕 등급
+string fearGreedGrade = fearGreedScore <= -60 ? "극단적공포" : fearGreedScore <= -30 ? "공포" : fearGreedScore <= -10 ? "약한공포" : fearGreedScore < 10 ? "중립" : fearGreedScore < 30 ? "약한탐욕" : fearGreedScore < 60 ? "탐욕" : "극단적탐욕"
+
+string fearGreedEmoji = fearGreedScore <= -60 ? "😱" : fearGreedScore <= -30 ? "😨" : fearGreedScore <= -10 ? "😟" : fearGreedScore < 10 ? "😐" : fearGreedScore < 30 ? "🙂" : fearGreedScore < 60 ? "😀" : "🤑"
+
+color fearGreedColor = fearGreedScore <= -60 ? color.new(color.green, 0) : fearGreedScore <= -30 ? color.new(color.lime, 20) : fearGreedScore <= -10 ? color.new(color.teal, 30) : fearGreedScore < 10 ? color.new(color.gray, 50) : fearGreedScore < 30 ? color.new(color.orange, 30) : fearGreedScore < 60 ? color.new(color.red, 20) : color.new(color.fuchsia, 0)
+
+// 매수/매도 심리 구간
+bool psychBuyZone = fearGreedScore <= -30 and nearSupport3d  // 공포 + 지지대 근처
+bool psychSellZone = fearGreedScore >= 30 and nearResistance3d  // 탐욕 + 저항대 근처
+bool extremeFear = fearGreedScore <= -60  // 극단적 공포 = 강한 매수 신호
+bool extremeGreed = fearGreedScore >= 60  // 극단적 탐욕 = 강한 매도 신호
+
+// 3. 볼륨 프로파일 기반 지지/저항 (간략 버전)
+float volHigh = ta.highest(volume, 50)
+float volLow = ta.lowest(volume, 50)
+float volAvg50 = ta.sma(volume, 50)
+bool highVolBar = volume > volAvg50 * 2
+
+// 고거래량 발생 가격대 추적 (최근 50봉 중 고거래량 발생한 가격)
+var float volSupportLevel = na
+var float volResistanceLevel = na
+
+if highVolBar and close > open
+    volSupportLevel := low
+if highVolBar and close < open
+    volResistanceLevel := high
+
+bool nearVolSupport = not na(volSupportLevel) and math.abs(close - volSupportLevel) / close * 100 < 1.5
+bool nearVolResistance = not na(volResistanceLevel) and math.abs(close - volResistanceLevel) / close * 100 < 1.5
+
+// 4. 피보나치 레벨
+float fibHigh = ta.highest(high, fibLookback)
+float fibLow = ta.lowest(low, fibLookback)
+float fibRange = fibHigh - fibLow
+
+float fib236 = fibHigh - fibRange * 0.236
+float fib382 = fibHigh - fibRange * 0.382
+float fib500 = fibHigh - fibRange * 0.5
+float fib618 = fibHigh - fibRange * 0.618
+float fib786 = fibHigh - fibRange * 0.786
+
+bool nearFib382 = math.abs(close - fib382) / close * 100 < 0.5
+bool nearFib500 = math.abs(close - fib500) / close * 100 < 0.5
+bool nearFib618 = math.abs(close - fib618) / close * 100 < 0.5
+
+// 5. 주요 고점/저점 (심리적 지지/저항)
+float keyHigh1 = ta.highest(high, keyLevelLookback)
+float keyLow1 = ta.lowest(low, keyLevelLookback)
+float keyHigh2 = ta.highest(high, keyLevelLookback * 2)
+float keyLow2 = ta.lowest(low, keyLevelLookback * 2)
+
+// 심리적 스윙 고점/저점 찾기 (기존 swingHigh와 별도)
+float psychSwingHigh = ta.pivothigh(high, 15, 15)
+float psychSwingLow = ta.pivotlow(low, 15, 15)
+
+var float lastPsychHigh = na
+var float lastPsychLow = na
+var float prevPsychHigh = na
+var float prevPsychLow = na
+
+if not na(psychSwingHigh)
+    prevPsychHigh := lastPsychHigh
+    lastPsychHigh := psychSwingHigh
+if not na(psychSwingLow)
+    prevPsychLow := lastPsychLow
+    lastPsychLow := psychSwingLow
+
+bool nearKeyHigh = not na(lastPsychHigh) and math.abs(close - lastPsychHigh) / close * 100 < 1.0
+bool nearKeyLow = not na(lastPsychLow) and math.abs(close - lastPsychLow) / close * 100 < 1.0
+
+// 6. POC (Point of Control) - 거래량 집중 가격대
+var float[] priceVolume = array.new_float(20, 0.0)
+var float[] priceLevels = array.new_float(20, 0.0)
+
+float priceRangeHigh = ta.highest(high, pocLookback)
+float priceRangeLow = ta.lowest(low, pocLookback)
+float priceStep = (priceRangeHigh - priceRangeLow) / 20
+
+// 현재 봉의 가격대 인덱스
+int priceIndex = priceStep > 0 ? math.min(19, math.max(0, int((close - priceRangeLow) / priceStep))) : 0
+
+// 거래량 누적
+if bar_index > pocLookback
+    array.set(priceVolume, priceIndex, array.get(priceVolume, priceIndex) + volume)
+    array.set(priceLevels, priceIndex, priceRangeLow + priceStep * priceIndex + priceStep / 2)
+
+// POC 찾기 (가장 거래량 많은 가격대)
+var float pocPrice = na
+var float maxVol = 0.0
+var float hvnPrice1 = na  // High Volume Node 1
+var float hvnPrice2 = na  // High Volume Node 2
+
+if barstate.islast
+    maxVol := 0.0
+    float secondMaxVol = 0.0
+    for i = 0 to 19
+        float vol = array.get(priceVolume, i)
+        if vol > maxVol
+            secondMaxVol := maxVol
+            hvnPrice2 := hvnPrice1
+            maxVol := vol
+            pocPrice := array.get(priceLevels, i)
+            hvnPrice1 := pocPrice
+        else if vol > secondMaxVol
+            secondMaxVol := vol
+            hvnPrice2 := array.get(priceLevels, i)
+
+bool nearPOC = not na(pocPrice) and math.abs(close - pocPrice) / close * 100 < 0.5
+
+// 종합 심리적 구간 판단
+string psychZone = extremeFear ? "극단적공포" : extremeGreed ? "극단적탐욕" : psychBuyZone ? "매수구간" : psychSellZone ? "매도구간" : nearRoundBelow ? "라운드지지" : nearRoundAbove ? "라운드저항" : nearFib618 ? "Fib618" : nearFib500 ? "Fib500" : nearFib382 ? "Fib382" : "중립"
 
 // ============================================
 // 차트 표시
@@ -679,6 +883,119 @@ plot(showBB ? bbLower : na, color=color.new(color.gray, 50), linewidth=1, title=
 plotshape(showDivergence and bullishDivergence, style=shape.labelup, location=location.belowbar, color=color.new(color.green, 20), text="DIV+", textcolor=color.white, size=size.tiny, title="Bullish Div", offset=-pivotRight)
 plotshape(showDivergence and bearishDivergence, style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 20), text="DIV-", textcolor=color.white, size=size.tiny, title="Bearish Div", offset=-pivotRight)
 
+// ============================================
+// 심리적 구간 시각화
+// ============================================
+
+// 라운드 넘버 라인
+var line roundBelowLine = na
+var line roundAboveLine = na
+var label roundBelowLabel = na
+var label roundAboveLabel = na
+
+if showPsychLevels and showRoundNumbers and barstate.islast
+    if not na(roundBelowLine)
+        line.delete(roundBelowLine)
+    if not na(roundAboveLine)
+        line.delete(roundAboveLine)
+    if not na(roundBelowLabel)
+        label.delete(roundBelowLabel)
+    if not na(roundAboveLabel)
+        label.delete(roundAboveLabel)
+
+    roundBelowLine := line.new(bar_index - 50, roundBelow, bar_index + 10, roundBelow, color=color.new(color.blue, 50), width=2, style=line.style_dotted)
+    roundAboveLine := line.new(bar_index - 50, roundAbove, bar_index + 10, roundAbove, color=color.new(color.blue, 50), width=2, style=line.style_dotted)
+    roundBelowLabel := label.new(bar_index + 12, roundBelow, "📍$" + str.tostring(roundBelow, "#"), style=label.style_label_left, color=color.new(color.blue, 70), textcolor=color.white, size=size.tiny)
+    roundAboveLabel := label.new(bar_index + 12, roundAbove, "📍$" + str.tostring(roundAbove, "#"), style=label.style_label_left, color=color.new(color.blue, 70), textcolor=color.white, size=size.tiny)
+
+// 피보나치 레벨 라인
+var line fib382Line = na
+var line fib500Line = na
+var line fib618Line = na
+
+if showPsychLevels and showFibLevels and barstate.islast
+    if not na(fib382Line)
+        line.delete(fib382Line)
+    if not na(fib500Line)
+        line.delete(fib500Line)
+    if not na(fib618Line)
+        line.delete(fib618Line)
+
+    fib382Line := line.new(bar_index - 50, fib382, bar_index + 10, fib382, color=color.new(color.yellow, 20), width=2, style=line.style_dashed)
+    fib500Line := line.new(bar_index - 50, fib500, bar_index + 10, fib500, color=color.new(color.orange, 20), width=2, style=line.style_dashed)
+    fib618Line := line.new(bar_index - 50, fib618, bar_index + 10, fib618, color=color.new(color.red, 20), width=2, style=line.style_dashed)
+
+// 주요 고점/저점 (심리적 지지/저항)
+var line keyHighLine = na
+var line keyLowLine = na
+var line prevKeyHighLine = na
+var line prevKeyLowLine = na
+var label keyHighLabel = na
+var label keyLowLabel = na
+
+if showPsychLevels and showKeyLevels and barstate.islast
+    if not na(keyHighLine)
+        line.delete(keyHighLine)
+    if not na(keyLowLine)
+        line.delete(keyLowLine)
+    if not na(prevKeyHighLine)
+        line.delete(prevKeyHighLine)
+    if not na(prevKeyLowLine)
+        line.delete(prevKeyLowLine)
+    if not na(keyHighLabel)
+        label.delete(keyHighLabel)
+    if not na(keyLowLabel)
+        label.delete(keyLowLabel)
+
+    if not na(lastPsychHigh)
+        keyHighLine := line.new(bar_index - 80, lastPsychHigh, bar_index + 10, lastPsychHigh, color=color.new(color.red, 30), width=2, style=line.style_solid)
+        keyHighLabel := label.new(bar_index + 12, lastPsychHigh, "🔺고점\n$" + str.tostring(lastPsychHigh, "#"), style=label.style_label_left, color=color.new(color.red, 50), textcolor=color.white, size=size.tiny)
+    if not na(lastPsychLow)
+        keyLowLine := line.new(bar_index - 80, lastPsychLow, bar_index + 10, lastPsychLow, color=color.new(color.green, 30), width=2, style=line.style_solid)
+        keyLowLabel := label.new(bar_index + 12, lastPsychLow, "🔻저점\n$" + str.tostring(lastPsychLow, "#"), style=label.style_label_left, color=color.new(color.green, 50), textcolor=color.white, size=size.tiny)
+    if not na(prevPsychHigh) and prevPsychHigh != lastPsychHigh
+        prevKeyHighLine := line.new(bar_index - 80, prevPsychHigh, bar_index + 10, prevPsychHigh, color=color.new(color.red, 60), width=1, style=line.style_dotted)
+    if not na(prevPsychLow) and prevPsychLow != lastPsychLow
+        prevKeyLowLine := line.new(bar_index - 80, prevPsychLow, bar_index + 10, prevPsychLow, color=color.new(color.green, 60), width=1, style=line.style_dotted)
+
+// POC (Point of Control) 라인
+var line pocLine = na
+var line hvnLine1 = na
+var line hvnLine2 = na
+var label pocLabel = na
+var box pocBox = na
+
+if showPsychLevels and showPOC and barstate.islast
+    if not na(pocLine)
+        line.delete(pocLine)
+    if not na(hvnLine1)
+        line.delete(hvnLine1)
+    if not na(hvnLine2)
+        line.delete(hvnLine2)
+    if not na(pocLabel)
+        label.delete(pocLabel)
+    if not na(pocBox)
+        box.delete(pocBox)
+
+    if not na(pocPrice)
+        // POC 라인 (가장 거래량 많은 가격)
+        pocLine := line.new(bar_index - 80, pocPrice, bar_index + 10, pocPrice, color=color.new(color.yellow, 0), width=3, style=line.style_solid)
+        pocLabel := label.new(bar_index + 12, pocPrice, "⚡POC\n$" + str.tostring(pocPrice, "#"), style=label.style_label_left, color=color.new(color.yellow, 30), textcolor=color.black, size=size.tiny)
+        // POC 주변 박스 (거래량 집중 구간)
+        float boxHeight = priceStep * 2
+        pocBox := box.new(bar_index - 60, pocPrice + boxHeight, bar_index + 5, pocPrice - boxHeight, bgcolor=color.new(color.yellow, 85), border_color=color.new(color.yellow, 50), border_width=1)
+
+// 공포/탐욕 배경색 (극단적 구간만)
+bgcolor(showPsychLevels and showFearGreed and extremeFear ? color.new(color.green, 85) : na, title="극단적 공포")
+bgcolor(showPsychLevels and showFearGreed and extremeGreed ? color.new(color.red, 85) : na, title="극단적 탐욕")
+
+// 심리적 매수/매도 구간 마커
+plotshape(showPsychLevels and psychBuyZone and not extremeFear, style=shape.diamond, location=location.belowbar, color=color.new(color.teal, 30), size=size.tiny, title="심리적 매수 구간")
+plotshape(showPsychLevels and psychSellZone and not extremeGreed, style=shape.diamond, location=location.abovebar, color=color.new(color.maroon, 30), size=size.tiny, title="심리적 매도 구간")
+
+// 라운드 넘버 근처 알림
+plotshape(showPsychLevels and showRoundNumbers and atRoundNumber, style=shape.circle, location=location.belowbar, color=color.new(color.blue, 50), size=size.tiny, title="라운드 넘버")
+
 // 3일 지지/저항 라인
 var line sup3dLine = na
 var line res3dLine = na
@@ -700,15 +1017,38 @@ if showSR and barstate.islast
     sup3dLabel := label.new(bar_index + 12, support3d, "3D SUP\n" + str.tostring(support3d, "#.#"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
     res3dLabel := label.new(bar_index + 12, resistance3d, "3D RES\n" + str.tostring(resistance3d, "#.#"), style=label.style_label_left, color=color.red, textcolor=color.white, size=size.small)
 
-// 메인 시그널 (필터링 적용)
-plotshape(showVisuals and showSuperLong, style=shape.diamond, location=location.belowbar, color=color.aqua, size=size.huge, title="SUPER LONG")
-plotshape(showVisuals and showStrongLong, style=shape.triangleup, location=location.belowbar, color=color.yellow, size=size.huge, title="STRONG LONG")
-plotshape(showVisuals and showNormalLong, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal, title="LONG")
-plotshape(showVisuals and strongShort, style=shape.triangledown, location=location.abovebar, color=color.fuchsia, size=size.large, title="STRONG SHORT")
+// 메인 시그널 (핵심만 표시)
+// SUPER LONG: 🚀 로켓 - 가장 확실한 진입 구간
+plotshape(showVisuals and showSuperLong, style=shape.labelup, location=location.belowbar, color=color.new(color.aqua, 0), text="🚀", textcolor=color.white, size=size.huge, title="SUPER LONG")
+// STRONG LONG: ⭐ 별 - 강력한 진입 구간
+plotshape(showVisuals and showStrongLong, style=shape.labelup, location=location.belowbar, color=color.new(color.yellow, 0), text="⭐", textcolor=color.black, size=size.large, title="STRONG LONG")
+// LONG: 일반 삼각형 - 시그널 모드 "전체"일 때만 표시
+plotshape(showVisuals and showNormalLong and signalMode == "전체", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="LONG")
 
-// 매도(청산) 시그널
+// SHORT 시그널 (LONG과 유사한 등급)
+// SUPER SHORT: 💀 해골 - 가장 확실한 숏 구간
+plotshape(showVisuals and superShort, style=shape.labeldown, location=location.abovebar, color=color.new(color.fuchsia, 0), text="💀", textcolor=color.white, size=size.huge, title="SUPER SHORT")
+// STRONG SHORT: ⚠️ 경고 - 강력한 숏 구간
+plotshape(showVisuals and strongShort, style=shape.labeldown, location=location.abovebar, color=color.new(color.orange, 0), text="⚠️", textcolor=color.black, size=size.large, title="STRONG SHORT")
+// SHORT: 일반 삼각형 - 시그널 모드 "전체"일 때만 표시
+plotshape(showVisuals and normalShort and signalMode == "전체", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="SHORT")
+
+// 청산 시그널
 plotshape(showVisuals and exitLongSignal, style=shape.xcross, location=location.abovebar, color=color.red, size=size.normal, title="EXIT LONG")
-plotshape(showVisuals and trailFlipToShort and not exitLongSignal, style=shape.circle, location=location.abovebar, color=color.orange, size=size.tiny, title="Trail Flip")
+plotshape(showVisuals and exitShortSignal, style=shape.xcross, location=location.belowbar, color=color.green, size=size.normal, title="EXIT SHORT")
+plotshape(showVisuals and trailFlipToShort and not exitLongSignal, style=shape.circle, location=location.abovebar, color=color.orange, size=size.tiny, title="Trail Warning")
+
+// 고래 매수/매도 시그널
+// 고래 등급별 라벨 표시
+if showVisuals and showWhale and whaleBuy
+    label.new(bar_index, low, whaleStrength + "\nBUY", style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.small)
+
+if showVisuals and showWhale and whaleSell
+    label.new(bar_index, high, whaleStrength + "\nSELL", style=label.style_label_down, color=color.purple, textcolor=color.white, size=size.small)
+
+// 고래 배경색
+bgcolor(showWhale and whaleBuy ? color.new(color.blue, 85) : na)
+bgcolor(showWhale and whaleSell ? color.new(color.purple, 85) : na)
 
 // 배경색 (필터링 적용)
 bgcolor(showSuperLong ? color.new(color.aqua, 60) : na)
@@ -1016,7 +1356,7 @@ if showInfoTable
 // ============================================
 
 if showMiniPanel and isMinimalMode and barstate.islast
-    var table miniTbl = table.new(position.top_right, 4, 6, bgcolor=color.new(color.black, 20), border_width=1)
+    var table miniTbl = table.new(position.top_right, 4, 8, bgcolor=color.new(color.black, 20), border_width=1)
 
     // 모드 표시
     string modeText = tradeMode == "선물" ? "F" : tradeMode == "현물" ? "S" : "K"
@@ -1038,46 +1378,81 @@ if showMiniPanel and isMinimalMode and barstate.islast
     color biasColor = longFavorable ? color.lime : shortFavorable ? color.red : color.gray
     color biasBg = longFavorable ? color.new(color.green, 30) : shortFavorable ? color.new(color.red, 30) : color.new(color.gray, 70)
 
+    // 조건 힌트 (왜 LONG/SHORT/WAIT인지)
+    string condHint = ""
+    if longFavorable
+        condHint := "Trail↑ 1H↑ " + str.tostring(longScore, "#") + "pt"
+    else if shortFavorable
+        condHint := "Trail↓ 1H↓ " + str.tostring(pricePosition, "#") + "%"
+    else
+        // WAIT 상태일 때 부족한 조건 표시
+        string missing = ""
+        if not smartTrailUp
+            missing := "Trail↓"
+        else if not tf1h_uptrend
+            missing := "1H↓"
+        else if longScore < 15
+            missing := str.tostring(longScore, "#") + "pt<15"
+        condHint := missing
+
     // Row 0: 방향 표시 (가장 눈에 띄게)
-    table.cell(miniTbl, 0, 0, biasIcon, text_color=biasColor, bgcolor=biasBg, text_size=size.large)
-    table.cell(miniTbl, 1, 0, "", text_color=biasColor, bgcolor=biasBg, text_size=size.large)
-    table.cell(miniTbl, 2, 0, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.lime : color.white, bgcolor=biasBg, text_size=size.normal)
-    table.cell(miniTbl, 3, 0, currentGrade, text_color=longScore >= 19 ? color.yellow : color.white, bgcolor=biasBg, text_size=size.normal)
+    table.cell(miniTbl, 0, 0, biasIcon, text_color=biasColor, bgcolor=biasBg, text_size=size.huge)
+    table.cell(miniTbl, 1, 0, condHint, text_color=biasColor, bgcolor=biasBg, text_size=size.small)
+    table.cell(miniTbl, 2, 0, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.lime : color.white, bgcolor=biasBg, text_size=size.large)
+    table.cell(miniTbl, 3, 0, currentGrade, text_color=longScore >= 19 ? color.yellow : color.white, bgcolor=biasBg, text_size=size.large)
 
     // EMA 각도 상태
     string emaAngleStatus = emaStrongUp ? "▲▲" : emaWeakUp ? "▲" : emaSideways ? "—" : "▼"
     color emaAngleStatusColor = emaStrongUp ? color.lime : emaWeakUp ? color.yellow : emaSideways ? color.orange : color.red
 
     // Row 1: 헤더
-    table.cell(miniTbl, 0, 1, "V39", text_color=color.white, bgcolor=color.blue, text_size=size.small)
-    table.cell(miniTbl, 1, 1, emaAngleStatus, text_color=emaAngleStatusColor, bgcolor=color.new(color.gray, 50), text_size=size.small)
-    table.cell(miniTbl, 2, 1, timeframe.period, text_color=color.white, bgcolor=color.gray, text_size=size.small)
-    table.cell(miniTbl, 3, 1, smartTrailUp ? "L" : "S", text_color=smartTrailUp ? color.lime : color.red, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(miniTbl, 0, 1, "V39", text_color=color.white, bgcolor=color.blue, text_size=size.normal)
+    table.cell(miniTbl, 1, 1, emaAngleStatus, text_color=emaAngleStatusColor, bgcolor=color.new(color.gray, 50), text_size=size.normal)
+    table.cell(miniTbl, 2, 1, timeframe.period, text_color=color.white, bgcolor=color.gray, text_size=size.normal)
+    table.cell(miniTbl, 3, 1, smartTrailUp ? "L" : "S", text_color=smartTrailUp ? color.lime : color.red, bgcolor=color.new(color.gray, 50), text_size=size.normal)
 
     // Row 2: 시그널
-    table.cell(miniTbl, 0, 2, "Signal", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 1, 2, sigText, text_color=sigColor, bgcolor=sigBg, text_size=size.normal)
-    table.cell(miniTbl, 2, 2, currentGrade, text_color=sigColor, bgcolor=sigBg, text_size=size.normal)
-    table.cell(miniTbl, 3, 2, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.green : color.gray, bgcolor=sigBg, text_size=size.tiny)
+    table.cell(miniTbl, 0, 2, "Signal", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 1, 2, sigText, text_color=sigColor, bgcolor=sigBg, text_size=size.large)
+    table.cell(miniTbl, 2, 2, currentGrade, text_color=sigColor, bgcolor=sigBg, text_size=size.large)
+    table.cell(miniTbl, 3, 2, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.green : color.gray, bgcolor=sigBg, text_size=size.small)
 
     // Row 3: 추세
-    table.cell(miniTbl, 0, 3, "추세", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 1, 3, str.tostring(uptrendCount) + "/4", text_color=uptrendCount >= 3 ? color.green : color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 2, 3, tf1h_uptrend ? "1H:UP" : "1H:DN", text_color=tf1h_uptrend ? color.green : color.red, text_size=size.tiny)
-    table.cell(miniTbl, 3, 3, tf4h_uptrend ? "4H:UP" : "4H:DN", text_color=tf4h_uptrend ? color.green : color.red, text_size=size.tiny)
+    table.cell(miniTbl, 0, 3, "추세", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 1, 3, str.tostring(uptrendCount) + "/4", text_color=uptrendCount >= 3 ? color.green : color.gray, text_size=size.small)
+    table.cell(miniTbl, 2, 3, tf1h_uptrend ? "1H:UP" : "1H:DN", text_color=tf1h_uptrend ? color.green : color.red, text_size=size.small)
+    table.cell(miniTbl, 3, 3, tf4h_uptrend ? "4H:UP" : "4H:DN", text_color=tf4h_uptrend ? color.green : color.red, text_size=size.small)
 
     // Row 4: 위치/거래량
-    table.cell(miniTbl, 0, 4, "위치", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 1, 4, str.tostring(pricePosition, "#") + "%", text_color=nearSupport3d ? color.green : nearResistance3d ? color.red : color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 2, 4, "Vol", text_color=color.white, bgcolor=color.gray, text_size=size.tiny)
-    table.cell(miniTbl, 3, 4, str.tostring(volRatio, "#.#") + "x", text_color=volSpike ? color.green : color.gray, text_size=size.tiny)
+    table.cell(miniTbl, 0, 4, "위치", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 1, 4, str.tostring(pricePosition, "#") + "%", text_color=nearSupport3d ? color.green : nearResistance3d ? color.red : color.gray, text_size=size.small)
+    table.cell(miniTbl, 2, 4, "Vol", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 3, 4, str.tostring(volRatio, "#.#") + "x", text_color=volSpike ? color.green : color.gray, text_size=size.small)
 
     // Row 5: 상태
     color statusBg = exitLongSignal ? color.new(color.red, 50) : trailFlipToShort ? color.new(color.orange, 60) : color.new(color.gray, 70)
-    table.cell(miniTbl, 0, 5, "STATUS", text_color=color.white, bgcolor=color.navy, text_size=size.tiny)
-    table.cell(miniTbl, 1, 5, statusText, text_color=statusColor, bgcolor=statusBg, text_size=size.normal)
-    table.cell(miniTbl, 2, 5, inDiscount ? "DISC" : inPremium ? "PREM" : "MID", text_color=inDiscount ? color.green : inPremium ? color.red : color.gray, bgcolor=statusBg, text_size=size.tiny)
-    table.cell(miniTbl, 3, 5, superLong ? "GO!!" : strongLong ? "GO!" : exitLongSignal ? "OUT!" : "", text_color=superLong ? color.aqua : strongLong ? color.yellow : color.red, bgcolor=statusBg, text_size=size.small)
+    table.cell(miniTbl, 0, 5, "STATUS", text_color=color.white, bgcolor=color.navy, text_size=size.small)
+    table.cell(miniTbl, 1, 5, statusText, text_color=statusColor, bgcolor=statusBg, text_size=size.large)
+    table.cell(miniTbl, 2, 5, inDiscount ? "DISC" : inPremium ? "PREM" : "MID", text_color=inDiscount ? color.green : inPremium ? color.red : color.gray, bgcolor=statusBg, text_size=size.small)
+    table.cell(miniTbl, 3, 5, superLong ? "GO!!" : strongLong ? "GO!" : exitLongSignal ? "OUT!" : "", text_color=superLong ? color.aqua : strongLong ? color.yellow : color.red, bgcolor=statusBg, text_size=size.normal)
+
+    // Row 6: 고래 정보
+    string whaleStatus = whaleBuy ? "🐋BUY" : whaleSell ? "🐋SELL" : "-"
+    color whaleBg = whaleBuy ? color.new(color.blue, 50) : whaleSell ? color.new(color.purple, 50) : color.new(color.gray, 70)
+    color whaleColor = whaleBuy ? color.aqua : whaleSell ? color.fuchsia : color.gray
+    table.cell(miniTbl, 0, 6, "WHALE", text_color=color.white, bgcolor=color.new(color.purple, 30), text_size=size.small)
+    table.cell(miniTbl, 1, 6, whaleStatus, text_color=whaleColor, bgcolor=whaleBg, text_size=size.normal)
+    table.cell(miniTbl, 2, 6, isWhaleVolume ? str.tostring(volRatio, "#.#") + "x" : "-", text_color=isWhaleVolume ? color.yellow : color.gray, bgcolor=whaleBg, text_size=size.small)
+    table.cell(miniTbl, 3, 6, whaleBuy or whaleSell ? whaleStrength : "", text_color=color.yellow, bgcolor=whaleBg, text_size=size.small)
+
+    // Row 7: 심리적 구간
+    color psychBg = extremeFear ? color.new(color.green, 40) : extremeGreed ? color.new(color.red, 40) : psychBuyZone ? color.new(color.teal, 50) : psychSellZone ? color.new(color.maroon, 50) : color.new(color.gray, 70)
+    color psychColor = extremeFear or psychBuyZone ? color.lime : extremeGreed or psychSellZone ? color.red : color.gray
+    string fgScoreText = str.tostring(fearGreedScore, "#")
+    table.cell(miniTbl, 0, 7, "심리", text_color=color.white, bgcolor=color.new(color.navy, 30), text_size=size.small)
+    table.cell(miniTbl, 1, 7, fearGreedEmoji + fearGreedGrade, text_color=psychColor, bgcolor=psychBg, text_size=size.small)
+    table.cell(miniTbl, 2, 7, fgScoreText, text_color=psychColor, bgcolor=psychBg, text_size=size.small)
+    table.cell(miniTbl, 3, 7, nearRoundBelow ? "📍SUP" : nearRoundAbove ? "📍RES" : "", text_color=color.aqua, bgcolor=psychBg, text_size=size.small)
 
 // ============================================
 // 알림 (참고용 - 투자권유 아님)
@@ -1093,47 +1468,115 @@ string volDetails = volDetail15m + " " + volDetail1h + " " + volDetail4h
 string disclaimer = "[참고용-투자권유아님]"
 
 if superLong
-    string m1 = "***** SUPER LONG [" + finalGrade + "] " + str.tostring(longScore, "#") + "pt *****"
-    string m2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
-    string m3 = "MTF + SMC + Smart Trail 모두 일치!"
-    string m4 = "추세: " + trendStrength + " | 위치: " + str.tostring(pricePosition, "#") + "%"
-    string m5 = "TF:" + str.tostring(uptrendCount) + "/4 | Vol:" + str.tostring(volSpikeCount) + "/4"
-    string m6 = disclaimer
-    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6
-    alert(msg, freq=alert.freq_once_per_bar)
+    string m1 = "🚀🚀🚀 SUPER LONG 🚀🚀🚀"
+    string m2 = "[" + finalGrade + "] " + str.tostring(longScore, "#") + "pt"
+    string m3 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string m4 = "━━━━━━━━━━━━━━"
+    string m5 = "📈 추세: " + trendStrength + " | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string m6 = "📊 TF:" + str.tostring(uptrendCount) + "/4 | Vol:" + str.tostring(volSpikeCount) + "/4"
+    string m7 = "📉 거래량: " + str.tostring(volRatio, "#.#") + "x | 매수압력: " + str.tostring(buyPressure, "#") + "%"
+    string m8 = disclaimer
+    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7 + "\n" + m8
+    alert(msg, freq=alert.freq_once_per_bar_close)
 
 if strongLong and not superLong
-    string m1 = "*** STRONG LONG [" + currentGrade + "] " + str.tostring(longScore, "#") + "pt ***"
-    string m2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
-    string m3 = "추세: " + trendStrength + " | 위치: " + str.tostring(pricePosition, "#") + "%"
-    string m4 = "TF:" + str.tostring(uptrendCount) + "/4 EMA:" + str.tostring(emaAlignedUpCount) + "/5"
-    string m5 = "Vol배수: " + volDetails
-    string m6 = disclaimer
-    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6
-    alert(msg, freq=alert.freq_once_per_bar)
+    string m1 = "⭐⭐ STRONG LONG ⭐⭐"
+    string m2 = "[" + currentGrade + "] " + str.tostring(longScore, "#") + "pt"
+    string m3 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string m4 = "━━━━━━━━━━━━━━"
+    string m5 = "📈 추세: " + trendStrength + " | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string m6 = "📊 TF:" + str.tostring(uptrendCount) + "/4 | EMA:" + str.tostring(emaAlignedUpCount) + "/5"
+    string m7 = "📉 거래량: " + str.tostring(volRatio, "#.#") + "x | 매수압력: " + str.tostring(buyPressure, "#") + "%"
+    string m8 = disclaimer
+    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7 + "\n" + m8
+    alert(msg, freq=alert.freq_once_per_bar_close)
 
 if normalLong and signalMode == "전체"
-    string m1 = "LONG [" + currentGrade + "] " + str.tostring(longScore, "#") + "pt"
+    string m1 = "📗 LONG [" + currentGrade + "] " + str.tostring(longScore, "#") + "pt"
     string m2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
-    string m3 = "추세:" + trendStrength + " TF:" + str.tostring(uptrendCount) + "/4"
-    string m4 = "Vol: " + str.tostring(volRatio, "#.#") + "x | " + disclaimer
-    alert(m1 + "\n" + m2 + "\n" + m3 + "\n" + m4, freq=alert.freq_once_per_bar)
+    string m3 = "📈 추세:" + trendStrength + " | TF:" + str.tostring(uptrendCount) + "/4"
+    string m4 = "📉 거래량: " + str.tostring(volRatio, "#.#") + "x | 매수압력: " + str.tostring(buyPressure, "#") + "%"
+    string m5 = disclaimer
+    alert(m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5, freq=alert.freq_once_per_bar_close)
 
 // ============================================
 // 청산 알림
 // ============================================
 
 if exitLongSignal
-    string e1 = "!!! EXIT LONG !!!"
+    string e1 = "❌❌ EXIT LONG ❌❌"
     string e2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
-    string e3 = "Smart Trail이 SHORT로 전환됨"
-    string e4 = "점수: " + str.tostring(longScore, "#") + "pt | 1H추세: " + (tf1h_uptrend ? "UP" : "DOWN")
-    string e5 = disclaimer
-    alert(e1 + "\n" + e2 + "\n" + e3 + "\n" + e4 + "\n" + e5, freq=alert.freq_once_per_bar)
+    string e3 = "━━━━━━━━━━━━━━"
+    string e4 = "⚠️ Smart Trail이 SHORT로 전환됨"
+    string e5 = "📊 점수: " + str.tostring(longScore, "#") + "pt | 1H추세: " + (tf1h_uptrend ? "UP" : "DOWN")
+    string e6 = disclaimer
+    alert(e1 + "\n" + e2 + "\n" + e3 + "\n" + e4 + "\n" + e5 + "\n" + e6, freq=alert.freq_once_per_bar_close)
 
 if trailFlipToShort and not exitLongSignal
-    string w1 = "!! Trail Warning !!"
+    string w1 = "⚠️ Trail Warning ⚠️"
     string w2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
-    string w3 = "Smart Trail SHORT 전환 - 모니터링 필요"
-    string w4 = "점수: " + str.tostring(longScore, "#") + "pt | " + disclaimer
-    alert(w1 + "\n" + w2 + "\n" + w3 + "\n" + w4, freq=alert.freq_once_per_bar)
+    string w3 = "━━━━━━━━━━━━━━"
+    string w4 = "📉 Smart Trail SHORT 전환 - 모니터링 필요"
+    string w5 = "📊 점수: " + str.tostring(longScore, "#") + "pt | " + disclaimer
+    alert(w1 + "\n" + w2 + "\n" + w3 + "\n" + w4 + "\n" + w5, freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// SHORT 알림 (선물 모드에서만)
+// ============================================
+
+if superShort
+    string s1 = "💀💀💀 SUPER SHORT 💀💀💀"
+    string s2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string s3 = "━━━━━━━━━━━━━━"
+    string s4 = "📉 하락TF:" + str.tostring(downtrendCount) + "/4 | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string s5 = "📊 거래량: " + str.tostring(volRatio, "#.#") + "x | 매도압력: " + str.tostring(100 - buyPressure, "#") + "%"
+    string s6 = disclaimer
+    alert(s1 + "\n" + s2 + "\n" + s3 + "\n" + s4 + "\n" + s5 + "\n" + s6, freq=alert.freq_once_per_bar_close)
+
+if strongShort and not superShort
+    string s1 = "⚠️⚠️ STRONG SHORT ⚠️⚠️"
+    string s2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string s3 = "━━━━━━━━━━━━━━"
+    string s4 = "📉 하락TF:" + str.tostring(downtrendCount) + "/4 | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string s5 = "📊 거래량: " + str.tostring(volRatio, "#.#") + "x | 매도압력: " + str.tostring(100 - buyPressure, "#") + "%"
+    string s6 = disclaimer
+    alert(s1 + "\n" + s2 + "\n" + s3 + "\n" + s4 + "\n" + s5 + "\n" + s6, freq=alert.freq_once_per_bar_close)
+
+if normalShort and signalMode == "전체"
+    string s1 = "📕 SHORT"
+    string s2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string s3 = "📉 하락TF:" + str.tostring(downtrendCount) + "/4 | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string s4 = "📊 거래량: " + str.tostring(volRatio, "#.#") + "x | " + disclaimer
+    alert(s1 + "\n" + s2 + "\n" + s3 + "\n" + s4, freq=alert.freq_once_per_bar_close)
+
+if exitShortSignal
+    string e1 = "❌❌ EXIT SHORT ❌❌"
+    string e2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string e3 = "━━━━━━━━━━━━━━"
+    string e4 = "✅ Smart Trail이 LONG으로 전환됨"
+    string e5 = disclaimer
+    alert(e1 + "\n" + e2 + "\n" + e3 + "\n" + e4 + "\n" + e5, freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// 고래 알림
+// ============================================
+
+if showWhale and whaleBuy
+    string w1 = whaleStrength + " 매수 감지!"
+    string w2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string w3 = "━━━━━━━━━━━━━━"
+    string w4 = "📊 거래량: " + str.tostring(volRatio, "#.#") + "x (" + whaleKorean + " 등급)"
+    string w5 = "📈 가격변동: +" + str.tostring(priceChangePercent, "#.##") + "%"
+    string w6 = "💪 매수압력: " + str.tostring(buyPressure, "#") + "% | " + disclaimer
+    alert(w1 + "\n" + w2 + "\n" + w3 + "\n" + w4 + "\n" + w5 + "\n" + w6, freq=alert.freq_once_per_bar_close)
+
+if showWhale and whaleSell
+    string w1 = whaleStrength + " 매도 감지!"
+    string w2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string w3 = "━━━━━━━━━━━━━━"
+    string w4 = "📊 거래량: " + str.tostring(volRatio, "#.#") + "x (" + whaleKorean + " 등급)"
+    string w5 = "📉 가격변동: -" + str.tostring(priceChangePercent, "#.##") + "%"
+    string w6 = "📉 매도압력: " + str.tostring(100 - buyPressure, "#") + "% | " + disclaimer
+    alert(w1 + "\n" + w2 + "\n" + w3 + "\n" + w4 + "\n" + w5 + "\n" + w6, freq=alert.freq_once_per_bar_close)
+
+
