@@ -11,11 +11,9 @@
 //
 // ============================================
 
-// 환경변수에서 가져옴 (Cloudflare Workers Settings → Variables에서 설정)
-// BOT_TOKEN: 텔레그램 봇 토큰
-// OPENAI_API_KEY: OpenAI API 키
-const BOT_TOKEN = typeof env !== 'undefined' ? env.BOT_TOKEN : "YOUR_BOT_TOKEN";
-const OPENAI_API_KEY = typeof env !== 'undefined' ? env.OPENAI_API_KEY : "YOUR_OPENAI_API_KEY";
+// 텔레그램 봇 토큰 (하드코딩)
+const BOT_TOKEN = "8581875115:AAFVCZKj6YNd6BAhoSl1jzh0WsIEKUF1Nbo";
+const OPENAI_API_KEY = "YOUR_OPENAI_API_KEY"; // Settings → Variables에서 설정
 
 const PREMIUM_GROUP_ID = -1003318469200;
 const PREMIUM_GROUP_ID_2 = -1003672890861;
@@ -75,70 +73,57 @@ export default {
   // 스케줄 트리거 (4시간마다 자동 분석)
   // ============================================
   async scheduled(event, env, ctx) {
-    console.log("Cron started at:", new Date().toISOString());
-    try {
-      // 시작 알림 (디버깅용)
-      await sendMessage(ADMIN_ID, `🕐 Cron 시작: ${new Date().toISOString()}`);
-
-      await send4HourAnalysis();
-
-      // 완료 알림 (디버깅용)
-      await sendMessage(ADMIN_ID, `✅ Cron 완료!`);
-    } catch (error) {
-      console.error("Scheduled error:", error);
-      await sendMessage(ADMIN_ID, `⚠️ Cron 실행 에러: ${error.message}`);
-    }
+    // ctx.waitUntil로 백그라운드 실행 (타임아웃 방지)
+    ctx.waitUntil(runScheduledAnalysis());
   }
 };
 
+// 스케줄 작업 실행 함수
+async function runScheduledAnalysis() {
+  try {
+    await sendMessage(ADMIN_ID, `🕐 Cron 시작`);
+    await send4HourAnalysis();
+    await sendMessage(ADMIN_ID, `✅ Cron 완료!`);
+  } catch (error) {
+    await sendMessage(ADMIN_ID, `⚠️ Cron 에러: ${error.message}`);
+  }
+}
+
 // ============================================
-// 4시간 자동 분석 (무료 채널만) - 재시도 로직 포함
+// 4시간 자동 분석 (무료 채널만) - 빠른 API 버전
 // ============================================
 async function send4HourAnalysis() {
-  const maxRetries = 3;
+  try {
+    // 빠른 simple/price API 사용 (타임아웃 방지)
+    const simpleUrl = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_24hr_high=true&include_24hr_low=true`;
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const cgUrl = `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=7`;
-      const response = await fetch(cgUrl, {
-        headers: { 'Accept': 'application/json' },
-        cf: { cacheTtl: 60 }
-      });
+    const response = await fetch(simpleUrl, {
+      headers: { 'Accept': 'application/json' }
+    });
 
-      if (!response.ok) {
-        throw new Error(`API 응답 오류: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (!data.prices || data.prices.length === 0) {
-        throw new Error('가격 데이터 없음');
-      }
-
-    const prices = data.prices.map(p => p[1]);
-    const currentPrice = prices[prices.length - 1];
-    const price24hAgo = prices[Math.max(0, prices.length - 6)];
-    const changePercent = ((currentPrice - price24hAgo) / price24hAgo * 100).toFixed(2);
-
-    const ema9 = prices.slice(-9).reduce((a, b) => a + b, 0) / 9;
-    const ema21 = prices.slice(-21).reduce((a, b) => a + b, 0) / 21;
-    const ema50 = prices.slice(-50).reduce((a, b) => a + b, 0) / 50;
-    const trend = ema9 > ema21 ? "상승" : "하락";
-    const emaStrength = ema9 > ema21 && ema21 > ema50 ? "강한 상승" : ema9 < ema21 && ema21 < ema50 ? "강한 하락" : "혼조";
-
-    let gains = 0, losses = 0;
-    const recentPrices = prices.slice(-15);
-    for (let i = 1; i < recentPrices.length; i++) {
-      const change = recentPrices[i] - recentPrices[i - 1];
-      if (change > 0) gains += change;
-      else losses -= change;
+    if (!response.ok) {
+      throw new Error(`API ${response.status}`);
     }
-    const rs = gains / Math.max(losses, 0.0001);
-    const rsi = (100 - (100 / (1 + rs))).toFixed(1);
 
-    const high = Math.max(...prices.slice(-50));
-    const low = Math.min(...prices.slice(-50));
+    const data = await response.json();
+
+    if (!data.bitcoin) {
+      throw new Error('BTC 데이터 없음');
+    }
+
+    const currentPrice = Math.round(data.bitcoin.usd);
+    const changePercent = data.bitcoin.usd_24h_change?.toFixed(2) || "0.00";
+    const high = data.bitcoin.usd_24h_high || currentPrice * 1.02;
+    const low = data.bitcoin.usd_24h_low || currentPrice * 0.98;
+
+    // 간단한 지표 계산
     const position = ((currentPrice - low) / (high - low) * 100).toFixed(0);
+    const trend = changePercent > 0 ? "상승" : "하락";
+    const trendStrength = Math.abs(changePercent) > 3 ? "강한 " : "";
+
+    // RSI 추정 (24시간 변동 기반)
+    let rsi = 50 + (changePercent * 2.5);
+    rsi = Math.max(20, Math.min(80, rsi)).toFixed(0);
 
     const now = new Date();
     const kstHours = (now.getUTCHours() + 9) % 24;
@@ -148,9 +133,9 @@ async function send4HourAnalysis() {
 
 ━━━━━━━━━━━━━━━━
 
-💰 현재가: $${currentPrice.toFixed(0)} (${changePercent > 0 ? '+' : ''}${changePercent}%)
+💰 현재가: $${currentPrice.toLocaleString()} (${changePercent > 0 ? '+' : ''}${changePercent}%)
 
-📈 추세: ${trend} (${emaStrength})
+📈 추세: ${trendStrength}${trend}
 📊 RSI: ${rsi} ${rsi > 70 ? '⚠️과매수' : rsi < 30 ? '✅과매도' : '중립'}
 📍 위치: ${position}% ${position < 30 ? '(DISC✅)' : position > 70 ? '(PREM⚠️)' : '(중간)'}
 
@@ -158,7 +143,7 @@ async function send4HourAnalysis() {
 
 🎯 V39 관점
 
-${ema9 > ema21 ? '✅ EMA 상승 정렬' : '⚠️ EMA 하락 정렬'}
+${changePercent > 0 ? '✅ 상승 추세' : '⚠️ 하락 추세'}
 ${position < 30 ? '✅ 매수 적합 구간' : position > 70 ? '⚠️ 매도 적합 구간' : '• 중립 구간'}
 ${rsi < 30 ? '✅ 과매도 반등 기대' : rsi > 70 ? '⚠️ 과매수 조정 주의' : '• RSI 중립'}
 
@@ -173,23 +158,14 @@ ${rsi < 30 ? '✅ 과매도 반등 기대' : rsi > 70 ? '⚠️ 과매수 조정
 📢 @V38_Signal
 🤖 @V30_Signal_bot`;
 
-      // 무료 채널에만 발송
-      await sendMessage(FREE_CHANNEL_ID, analysis);
+    // 무료 채널에 발송
+    await sendMessage(FREE_CHANNEL_ID, analysis);
+    return { success: true };
 
-      return { success: true, attempt };
-
-    } catch (error) {
-      console.log(`4시간 분석 시도 ${attempt}/${maxRetries} 실패: ${error.message}`);
-
-      if (attempt === maxRetries) {
-        // 마지막 시도도 실패하면 관리자에게 알림
-        await sendMessage(ADMIN_ID, `⚠️ 4시간 자동 분석 실패\n\n오류: ${error.message}\n\n수동 테스트: /test4h`);
-        return { success: false, error: error.message };
-      }
-
-      // 다음 시도 전 2초 대기
-      await new Promise(r => setTimeout(r, 2000));
-    }
+  } catch (error) {
+    // 에러 시 관리자에게 알림
+    await sendMessage(ADMIN_ID, `⚠️ 4H 분석 실패: ${error.message}`);
+    return { success: false, error: error.message };
   }
 }
 
@@ -701,6 +677,216 @@ TPpgMe6JxtudoEdDegkyKUaBUyAWRKti12
 
 ━━━━━━━━━━━━━━━━
 
+💡 세부 명령어
+/poc /라운드 /고점저점 /공포탐욕
+
+━━━━━━━━━━━━━━━━
+
+⚠️ 참고용 - 투자권유 아님`;
+  }
+
+  // /poc - POC 설명만
+  else if (command === '/poc') {
+    responseText = `⚡ POC (Point of Control)
+
+━━━━━━━━━━━━━━━━
+
+📊 POC란?
+
+• 가장 거래량이 많았던 가격대
+• Volume Profile의 핵심 레벨
+• 기관/고래가 관심 가지는 가격
+
+━━━━━━━━━━━━━━━━
+
+👀 차트에서 확인
+
+• 노란색 굵은 선 (━)
+• 노란색 박스 영역
+• 가격 레이블 표시
+
+━━━━━━━━━━━━━━━━
+
+🎯 활용법
+
+현재가 > POC:
+→ POC = 지지선
+→ 하락 시 반등 기대점
+
+현재가 < POC:
+→ POC = 저항선
+→ 상승 시 저항 예상점
+
+━━━━━━━━━━━━━━━━
+
+💡 매매 전략
+
+✅ 롱 진입:
+• POC 근처에서 지지 확인
+• POC 위에서 눌림목 매수
+
+⚠️ 주의:
+• POC 이탈 시 손절 고려
+• POC 돌파 실패 = 추세 전환 신호
+
+━━━━━━━━━━━━━━━━
+
+⚠️ 참고용 - 투자권유 아님`;
+  }
+
+  // /라운드 - 라운드 넘버 설명
+  else if (command === '/라운드' || command === '/round') {
+    responseText = `📍 라운드 넘버 (Round Number)
+
+━━━━━━━━━━━━━━━━
+
+📊 라운드 넘버란?
+
+• $90,000 / $95,000 / $100,000...
+• 심리적으로 중요한 "딱 떨어지는" 가격
+• 많은 트레이더가 주문 설정하는 가격
+
+━━━━━━━━━━━━━━━━
+
+👀 차트에서 확인
+
+• 파란 점선 (----)
+• 5000단위 표시
+• 라벨로 가격 표시
+
+━━━━━━━━━━━━━━━━
+
+🎯 왜 중요한가?
+
+1. 심리적 장벽
+   → "10만 달러 돌파!" 뉴스 효과
+
+2. 주문 집중
+   → TP/SL이 몰리는 구간
+
+3. 자기실현적 예언
+   → 많은 사람이 주목 → 실제로 작용
+
+━━━━━━━━━━━━━━━━
+
+💡 매매 전략
+
+✅ 지지로 활용:
+• 라운드 넘버 근처 롱 진입
+• 손절은 라운드 아래
+
+⚠️ 저항으로 주의:
+• 라운드 근처 도달 시 익절 고려
+• 돌파 후 되돌림 매매
+
+━━━━━━━━━━━━━━━━
+
+⚠️ 참고용 - 투자권유 아님`;
+  }
+
+  // /고점저점 - 고점/저점 설명
+  else if (command === '/고점저점' || command === '/hl' || command === '/highlow') {
+    responseText = `🔺🔻 주요 고점/저점
+
+━━━━━━━━━━━━━━━━
+
+📊 고점/저점이란?
+
+• 최근 스윙의 최고가/최저가
+• 시장 구조의 핵심 레벨
+• 돌파 시 추세 확인
+
+━━━━━━━━━━━━━━━━
+
+👀 차트에서 확인
+
+🔴 빨간선 = 이전 고점 (저항)
+🟢 초록선 = 이전 저점 (지지)
+
+━━━━━━━━━━━━━━━━
+
+🎯 시장 구조 해석
+
+📈 상승 구조:
+• HH (Higher High) = 더 높은 고점
+• HL (Higher Low) = 더 높은 저점
+→ 롱 유리
+
+📉 하락 구조:
+• LH (Lower High) = 더 낮은 고점
+• LL (Lower Low) = 더 낮은 저점
+→ 숏 유리
+
+━━━━━━━━━━━━━━━━
+
+💡 매매 전략
+
+✅ 롱 진입:
+• 저점(초록선) 지지 확인 후
+• HH/HL 구조에서 HL 매수
+
+⚠️ 손절:
+• 이전 저점 이탈 시
+• 구조 붕괴 = 추세 전환
+
+━━━━━━━━━━━━━━━━
+
+⚠️ 참고용 - 투자권유 아님`;
+  }
+
+  // /공포탐욕 - 공포/탐욕 지표 설명
+  else if (command === '/공포탐욕' || command === '/fear' || command === '/greed' || command === '/fg') {
+    responseText = `😱🤑 공포/탐욕 지표
+
+━━━━━━━━━━━━━━━━
+
+📊 공포/탐욕이란?
+
+• 시장 심리를 수치화한 지표
+• 극단적 감정 = 반전 기회
+• 미니패널 "심리" 행에 표시
+
+━━━━━━━━━━━━━━━━
+
+📏 점수 범위
+
+-100 ~ -60: 😱 극단적 공포 🟢
+-60 ~ -30:  😰 공포
+-30 ~ -10:  😐 약간 공포
+-10 ~ +10:  😶 중립
++10 ~ +30:  🙂 약간 탐욕
++30 ~ +60:  🤑 탐욕
++60 ~ +100: 🤑 극단적 탐욕 🔴
+
+━━━━━━━━━━━━━━━━
+
+🎯 역발상 매매
+
+😱 극단적 공포 (-60 이하):
+• "공포에 매수"
+• 다른 사람이 패닉 = 기회
+→ 롱 진입 고려
+
+🤑 극단적 탐욕 (+60 이상):
+• "탐욕에 매도"
+• 과열 상태 = 조정 임박
+→ 익절 또는 숏 고려
+
+━━━━━━━━━━━━━━━━
+
+💡 V39 활용
+
+✅ 최적 롱 조건:
+• 공포 + DISC 구간
+• 공포 + POC 지지
+• 공포 + 라운드 넘버 지지
+
+⚠️ 롱 주의 조건:
+• 탐욕 + PREM 구간
+• 탐욕 + 고점 저항
+
+━━━━━━━━━━━━━━━━
+
 ⚠️ 참고용 - 투자권유 아님`;
   }
 
@@ -808,6 +994,12 @@ TPpgMe6JxtudoEdDegkyKUaBUyAWRKti12
 /심리 - 심리적 구간 설명 ⭐
 /smc - SMC/구조 설명
 /설정 - 권장 설정
+
+📍 세부 설명
+/poc - POC 거래량 집중점
+/라운드 - 라운드 넘버
+/고점저점 - 고점/저점 구조
+/공포탐욕 - 공포/탐욕 지표
 
 ━━━━━━━━━━━━━━━━
 
