@@ -89,16 +89,27 @@ keyLevelLookback = input.int(50, title="주요 레벨 탐색 범위", minval=20,
 pocLookback = input.int(50, title="POC 탐색 범위", minval=20, maxval=200, group="심리적 구간")
 
 // ============================================
+// 일목균형표 (Ichimoku Cloud) 설정
+// ============================================
+showIchimoku = input.bool(true, title="일목 구름 표시", group="일목균형표")
+ichimokuFilter = input.bool(true, title="일목 구름 필터 활성화", group="일목균형표", tooltip="구름 위=롱만, 구름 아래=숏만")
+tenkanPeriod = input.int(20, title="전환선 기간", minval=1, maxval=50, group="일목균형표", tooltip="암호화폐 24/7 시장: 20 (기존 9)")
+kijunPeriod = input.int(60, title="기준선 기간", minval=1, maxval=100, group="일목균형표", tooltip="암호화폐 24/7 시장: 60 (기존 26)")
+senkouBPeriod = input.int(120, title="선행스팬B 기간", minval=1, maxval=200, group="일목균형표", tooltip="암호화폐 24/7 시장: 120 (기존 52)")
+displacement = input.int(30, title="구름 이동", minval=1, maxval=100, group="일목균형표", tooltip="암호화폐 24/7 시장: 30 (기존 26)")
+
+// ============================================
 // 현재 TF 기본 지표
 // ============================================
 
-ema9 = ta.ema(close, 9)
+// 피보나치 기반 EMA (기관/프로 설정: 8, 21, 55, 200)
+ema8 = ta.ema(close, 8)
 ema21 = ta.ema(close, 21)
-ema50 = ta.ema(close, 50)
+ema55 = ta.ema(close, 55)
 ema200 = ta.ema(close, 200)
 
-bool emaAlignedUp = ema9 > ema21 and ema21 > ema50
-bool emaAlignedDown = ema9 < ema21 and ema21 < ema50
+bool emaAlignedUp = ema8 > ema21 and ema21 > ema55
+bool emaAlignedDown = ema8 < ema21 and ema21 < ema55
 bool aboveEMA200 = close > ema200
 bool belowEMA200 = close < ema200
 
@@ -121,6 +132,42 @@ bool emaStrongUp = emaAngleValue > emaAngleThreshold
 bool emaWeakUp = emaAngleValue > 0 and emaAngleValue <= emaAngleThreshold
 bool emaSideways = emaAngleValue <= 0 and emaAngleValue >= -emaAngleThreshold
 bool emaStrongDown = emaAngleValue < -emaAngleThreshold
+
+// ============================================
+// 일목균형표 (Ichimoku Cloud) 계산
+// ============================================
+// 전환선 (Tenkan-sen): 9일 고저 평균
+float tenkanSen = (ta.highest(high, tenkanPeriod) + ta.lowest(low, tenkanPeriod)) / 2
+
+// 기준선 (Kijun-sen): 26일 고저 평균
+float kijunSen = (ta.highest(high, kijunPeriod) + ta.lowest(low, kijunPeriod)) / 2
+
+// 선행스팬A (Senkou Span A): 전환선+기준선 평균, 26일 앞에 표시
+float senkouSpanA = (tenkanSen + kijunSen) / 2
+
+// 선행스팬B (Senkou Span B): 52일 고저 평균, 26일 앞에 표시
+float senkouSpanB = (ta.highest(high, senkouBPeriod) + ta.lowest(low, senkouBPeriod)) / 2
+
+// 현재 구름 상단/하단 (26일 전 값 = 현재 구름)
+float currentCloudTop = math.max(senkouSpanA[displacement], senkouSpanB[displacement])
+float currentCloudBottom = math.min(senkouSpanA[displacement], senkouSpanB[displacement])
+
+// 구름 대비 가격 위치 판단
+bool priceAboveCloud = close > currentCloudTop      // 구름 위 = 강한 상승
+bool priceBelowCloud = close < currentCloudBottom   // 구름 아래 = 강한 하락
+bool priceInCloud = not priceAboveCloud and not priceBelowCloud  // 구름 내부 = 횡보/불확실
+
+// 구름 색상 (양운/음운)
+bool bullishCloud = senkouSpanA > senkouSpanB       // 양운 (초록)
+bool bearishCloud = senkouSpanA < senkouSpanB       // 음운 (빨강)
+
+// 구름 두께 (지지/저항 강도)
+float cloudThickness = math.abs(currentCloudTop - currentCloudBottom)
+float cloudThicknessPercent = cloudThickness / close * 100
+
+// 일목 신호 종합
+string ichimokuSignal = priceAboveCloud ? "구름위" : priceBelowCloud ? "구름아래" : "구름내"
+color ichimokuColor = priceAboveCloud ? color.lime : priceBelowCloud ? color.red : color.yellow
 
 // 볼린저밴드
 bbLength = 20
@@ -189,6 +236,59 @@ string whaleKorean = volRatio >= 10.0 ? "고래" :
                      volRatio >= 5.0 ? "돌고래" :
                      volRatio >= 3.0 ? "물고기" :
                      volRatio >= 2.0 ? "게" : "새우"
+
+// ============================================
+// Volume Delta & CVD (호가창 대체 분석)
+// ============================================
+
+// Volume Delta 설정
+showVolumeDelta = input.bool(true, title="Volume Delta 표시", group="Volume Delta")
+showCVD = input.bool(true, title="CVD 라인 표시", group="Volume Delta")
+deltaLength = input.int(14, title="Delta EMA 길이", minval=5, maxval=50, group="Volume Delta")
+deltaSpikeThreshold = input.float(2.0, title="Delta 급증 배수", minval=1.5, maxval=5.0, step=0.5, group="Volume Delta")
+
+// Volume Delta 계산 (매수 거래량 - 매도 거래량)
+float volumeDelta = bullVol - bearVol
+float absDelta = math.abs(volumeDelta)
+
+// Delta 비율 (전체 거래량 대비)
+float deltaRatio = volume > 0 ? volumeDelta / volume * 100 : 0
+
+// CVD (Cumulative Volume Delta) - 누적 델타
+var float cvd = 0.0
+cvd := cvd + volumeDelta
+
+// CVD EMA (추세 파악용)
+float cvdEma = ta.ema(cvd, deltaLength)
+float cvdSlope = cvd - cvd[1]
+bool cvdUptrend = cvd > cvdEma
+bool cvdDowntrend = cvd < cvdEma
+
+// Delta 급증 감지
+float avgDelta = ta.sma(absDelta, 20)
+float deltaSpike = absDelta / math.max(avgDelta, 0.0001)
+bool isDeltaSpike = deltaSpike >= deltaSpikeThreshold
+
+// Delta 방향
+bool positiveDelta = volumeDelta > 0
+bool negativeDelta = volumeDelta < 0
+bool strongPositiveDelta = deltaRatio > 30  // 매수 30% 이상 우세
+bool strongNegativeDelta = deltaRatio < -30 // 매도 30% 이상 우세
+
+// Delta 다이버전스 감지
+// 가격 상승 + Delta 하락 = 약세 다이버전스 (매도 신호)
+// 가격 하락 + Delta 상승 = 강세 다이버전스 (매수 신호)
+bool deltaBullDiv = close < close[5] and cvd > cvd[5] and volumeDelta > 0
+bool deltaBearDiv = close > close[5] and cvd < cvd[5] and volumeDelta < 0
+
+// Delta 연속성 (3봉 연속 같은 방향)
+bool delta3ConsecutiveBuy = volumeDelta > 0 and volumeDelta[1] > 0 and volumeDelta[2] > 0
+bool delta3ConsecutiveSell = volumeDelta < 0 and volumeDelta[1] < 0 and volumeDelta[2] < 0
+
+// Delta 기반 매수/매도 압력 등급
+string deltaGrade = strongPositiveDelta and delta3ConsecutiveBuy ? "STRONG BUY" : strongNegativeDelta and delta3ConsecutiveSell ? "STRONG SELL" : positiveDelta and cvdUptrend ? "BUY" : negativeDelta and cvdDowntrend ? "SELL" : "NEUTRAL"
+
+color deltaColor = deltaGrade == "STRONG BUY" ? color.lime : deltaGrade == "BUY" ? color.green : deltaGrade == "STRONG SELL" ? color.fuchsia : deltaGrade == "SELL" ? color.red : color.gray
 
 // 피봇/다이버전스
 float pivotHigh = ta.pivothigh(high, pivotLeft, pivotRight)
@@ -459,7 +559,7 @@ bool smcBearish = (isBearishOB or isBearishFVG or chochDn) and inPremium and not
 // 15분봉 분석 (5분봉 제거 - security 제한 40개)
 // ============================================
 
-tf15m_ema9 = request.security(syminfo.tickerid, "15", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+tf15m_ema8 = request.security(syminfo.tickerid, "15", ta.ema(close, 8), lookahead=barmerge.lookahead_off)
 tf15m_ema21 = request.security(syminfo.tickerid, "15", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
 tf15m_close = request.security(syminfo.tickerid, "15", close, lookahead=barmerge.lookahead_off)
 tf15m_rsi = request.security(syminfo.tickerid, "15", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
@@ -467,14 +567,14 @@ tf15m_vol = request.security(syminfo.tickerid, "15", volume, lookahead=barmerge.
 tf15m_avgVol = request.security(syminfo.tickerid, "15", ta.sma(volume, 20), lookahead=barmerge.lookahead_off)
 
 float tf15m_volRatio = tf15m_vol / math.max(tf15m_avgVol, 1)
-bool tf15m_uptrend = tf15m_ema9 > tf15m_ema21 and tf15m_close > tf15m_ema21
-bool tf15m_downtrend = tf15m_ema9 < tf15m_ema21 and tf15m_close < tf15m_ema21
+bool tf15m_uptrend = tf15m_ema8 > tf15m_ema21 and tf15m_close > tf15m_ema21
+bool tf15m_downtrend = tf15m_ema8 < tf15m_ema21 and tf15m_close < tf15m_ema21
 bool tf15m_volSpike = tf15m_volRatio >= volThreshold
 bool tf15m_oversold = tf15m_rsi < 35
 // 추세 강도
-tf15m_ema50 = request.security(syminfo.tickerid, "15", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
-bool tf15m_emaAligned = tf15m_ema9 > tf15m_ema21 and tf15m_ema21 > tf15m_ema50
-bool tf15m_emaAlignedDn = tf15m_ema9 < tf15m_ema21 and tf15m_ema21 < tf15m_ema50
+tf15m_ema55 = request.security(syminfo.tickerid, "15", ta.ema(close, 55), lookahead=barmerge.lookahead_off)
+bool tf15m_emaAligned = tf15m_ema8 > tf15m_ema21 and tf15m_ema21 > tf15m_ema55
+bool tf15m_emaAlignedDn = tf15m_ema8 < tf15m_ema21 and tf15m_ema21 < tf15m_ema55
 tf15m_macd = request.security(syminfo.tickerid, "15", ta.ema(close, 12) - ta.ema(close, 26), lookahead=barmerge.lookahead_off)
 tf15m_macdSig = request.security(syminfo.tickerid, "15", ta.ema(ta.ema(close, 12) - ta.ema(close, 26), 9), lookahead=barmerge.lookahead_off)
 bool tf15m_macdBull = tf15m_macd > tf15m_macdSig
@@ -483,9 +583,9 @@ bool tf15m_macdBull = tf15m_macd > tf15m_macdSig
 // 1시간봉 분석
 // ============================================
 
-tf1h_ema9 = request.security(syminfo.tickerid, "60", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+tf1h_ema8 = request.security(syminfo.tickerid, "60", ta.ema(close, 8), lookahead=barmerge.lookahead_off)
 tf1h_ema21 = request.security(syminfo.tickerid, "60", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
-tf1h_ema50 = request.security(syminfo.tickerid, "60", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+tf1h_ema55 = request.security(syminfo.tickerid, "60", ta.ema(close, 55), lookahead=barmerge.lookahead_off)
 tf1h_close = request.security(syminfo.tickerid, "60", close, lookahead=barmerge.lookahead_off)
 tf1h_rsi = request.security(syminfo.tickerid, "60", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
 tf1h_vol = request.security(syminfo.tickerid, "60", volume, lookahead=barmerge.lookahead_off)
@@ -494,13 +594,13 @@ tf1h_high3d = request.security(syminfo.tickerid, "60", ta.highest(high, 72), loo
 tf1h_low3d = request.security(syminfo.tickerid, "60", ta.lowest(low, 72), lookahead=barmerge.lookahead_off)
 
 float tf1h_volRatio = tf1h_vol / math.max(tf1h_avgVol, 1)
-bool tf1h_uptrend = tf1h_ema9 > tf1h_ema21 and tf1h_close > tf1h_ema21
-bool tf1h_downtrend = tf1h_ema9 < tf1h_ema21 and tf1h_close < tf1h_ema21
+bool tf1h_uptrend = tf1h_ema8 > tf1h_ema21 and tf1h_close > tf1h_ema21
+bool tf1h_downtrend = tf1h_ema8 < tf1h_ema21 and tf1h_close < tf1h_ema21
 bool tf1h_volSpike = tf1h_volRatio >= volThreshold
 bool tf1h_oversold = tf1h_rsi < 35
 // 추세 강도
-bool tf1h_emaAligned = tf1h_ema9 > tf1h_ema21 and tf1h_ema21 > tf1h_ema50
-bool tf1h_emaAlignedDn = tf1h_ema9 < tf1h_ema21 and tf1h_ema21 < tf1h_ema50
+bool tf1h_emaAligned = tf1h_ema8 > tf1h_ema21 and tf1h_ema21 > tf1h_ema55
+bool tf1h_emaAlignedDn = tf1h_ema8 < tf1h_ema21 and tf1h_ema21 < tf1h_ema55
 tf1h_macd = request.security(syminfo.tickerid, "60", ta.ema(close, 12) - ta.ema(close, 26), lookahead=barmerge.lookahead_off)
 tf1h_macdSig = request.security(syminfo.tickerid, "60", ta.ema(ta.ema(close, 12) - ta.ema(close, 26), 9), lookahead=barmerge.lookahead_off)
 bool tf1h_macdBull = tf1h_macd > tf1h_macdSig
@@ -509,7 +609,7 @@ bool tf1h_macdBull = tf1h_macd > tf1h_macdSig
 // 4시간봉 분석
 // ============================================
 
-tf4h_ema9 = request.security(syminfo.tickerid, "240", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+tf4h_ema8 = request.security(syminfo.tickerid, "240", ta.ema(close, 8), lookahead=barmerge.lookahead_off)
 tf4h_ema21 = request.security(syminfo.tickerid, "240", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
 tf4h_close = request.security(syminfo.tickerid, "240", close, lookahead=barmerge.lookahead_off)
 tf4h_rsi = request.security(syminfo.tickerid, "240", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
@@ -519,14 +619,14 @@ tf4h_high3d = request.security(syminfo.tickerid, "240", ta.highest(high, 18), lo
 tf4h_low3d = request.security(syminfo.tickerid, "240", ta.lowest(low, 18), lookahead=barmerge.lookahead_off)
 
 float tf4h_volRatio = tf4h_vol / math.max(tf4h_avgVol, 1)
-bool tf4h_uptrend = tf4h_ema9 > tf4h_ema21 and tf4h_close > tf4h_ema21
-bool tf4h_downtrend = tf4h_ema9 < tf4h_ema21 and tf4h_close < tf4h_ema21
+bool tf4h_uptrend = tf4h_ema8 > tf4h_ema21 and tf4h_close > tf4h_ema21
+bool tf4h_downtrend = tf4h_ema8 < tf4h_ema21 and tf4h_close < tf4h_ema21
 bool tf4h_volSpike = tf4h_volRatio >= volThreshold
 bool tf4h_oversold = tf4h_rsi < 35
 // 추세 강도
-tf4h_ema50 = request.security(syminfo.tickerid, "240", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
-bool tf4h_emaAligned = tf4h_ema9 > tf4h_ema21 and tf4h_ema21 > tf4h_ema50
-bool tf4h_emaAlignedDn = tf4h_ema9 < tf4h_ema21 and tf4h_ema21 < tf4h_ema50
+tf4h_ema55 = request.security(syminfo.tickerid, "240", ta.ema(close, 55), lookahead=barmerge.lookahead_off)
+bool tf4h_emaAligned = tf4h_ema8 > tf4h_ema21 and tf4h_ema21 > tf4h_ema55
+bool tf4h_emaAlignedDn = tf4h_ema8 < tf4h_ema21 and tf4h_ema21 < tf4h_ema55
 tf4h_macd = request.security(syminfo.tickerid, "240", ta.ema(close, 12) - ta.ema(close, 26), lookahead=barmerge.lookahead_off)
 tf4h_macdSig = request.security(syminfo.tickerid, "240", ta.ema(ta.ema(close, 12) - ta.ema(close, 26), 9), lookahead=barmerge.lookahead_off)
 bool tf4h_macdBull = tf4h_macd > tf4h_macdSig
@@ -535,20 +635,20 @@ bool tf4h_macdBull = tf4h_macd > tf4h_macdSig
 // 일봉 분석
 // ============================================
 
-tfD_ema9 = request.security(syminfo.tickerid, "D", ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+tfD_ema8 = request.security(syminfo.tickerid, "D", ta.ema(close, 8), lookahead=barmerge.lookahead_off)
 tfD_ema21 = request.security(syminfo.tickerid, "D", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
 tfD_close = request.security(syminfo.tickerid, "D", close, lookahead=barmerge.lookahead_off)
 tfD_rsi = request.security(syminfo.tickerid, "D", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
 tfD_high3d = request.security(syminfo.tickerid, "D", ta.highest(high, 3), lookahead=barmerge.lookahead_off)
 tfD_low3d = request.security(syminfo.tickerid, "D", ta.lowest(low, 3), lookahead=barmerge.lookahead_off)
 
-bool tfD_uptrend = tfD_ema9 > tfD_ema21 and tfD_close > tfD_ema21
-bool tfD_downtrend = tfD_ema9 < tfD_ema21 and tfD_close < tfD_ema21
+bool tfD_uptrend = tfD_ema8 > tfD_ema21 and tfD_close > tfD_ema21
+bool tfD_downtrend = tfD_ema8 < tfD_ema21 and tfD_close < tfD_ema21
 bool tfD_oversold = tfD_rsi < 35
 // 추세 강도
-tfD_ema50 = request.security(syminfo.tickerid, "D", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
-bool tfD_emaAligned = tfD_ema9 > tfD_ema21 and tfD_ema21 > tfD_ema50
-bool tfD_emaAlignedDn = tfD_ema9 < tfD_ema21 and tfD_ema21 < tfD_ema50
+tfD_ema55 = request.security(syminfo.tickerid, "D", ta.ema(close, 55), lookahead=barmerge.lookahead_off)
+bool tfD_emaAligned = tfD_ema8 > tfD_ema21 and tfD_ema21 > tfD_ema55
+bool tfD_emaAlignedDn = tfD_ema8 < tfD_ema21 and tfD_ema21 < tfD_ema55
 tfD_macd = request.security(syminfo.tickerid, "D", ta.ema(close, 12) - ta.ema(close, 26), lookahead=barmerge.lookahead_off)
 tfD_macdSig = request.security(syminfo.tickerid, "D", ta.ema(ta.ema(close, 12) - ta.ema(close, 26), 9), lookahead=barmerge.lookahead_off)
 bool tfD_macdBull = tfD_macd > tfD_macdSig
@@ -605,7 +705,7 @@ string trendStrength = trendScore >= 12 ? "VERY STRONG" : trendScore >= 10 ? "ST
 float longScore = 0
 
 // 추세 (8점)
-longScore += emaAlignedUp ? 3 : (ema9 > ema21 ? 1 : 0)
+longScore += emaAlignedUp ? 3 : (ema8 > ema21 ? 1 : 0)
 longScore += aboveEMA200 ? 2 : 0
 longScore += tf1h_uptrend ? 2 : 0
 longScore += tf4h_uptrend ? 1 : 0
@@ -628,8 +728,16 @@ longScore += pricePosition < 20 ? 2 : 0
 longScore += touchBBLower ? 2 : 0
 longScore += bullishDivergence ? 1 : 0
 
+// Volume Delta (4점) - 호가창 대체 분석
+longScore += strongPositiveDelta and delta3ConsecutiveBuy ? 3 : (positiveDelta and cvdUptrend ? 2 : positiveDelta ? 1 : 0)
+longScore += deltaBullDiv ? 1 : 0  // Delta 강세 다이버전스
+
+// SHORT 점수용 Delta (참고)
+float shortDeltaScore = strongNegativeDelta and delta3ConsecutiveSell ? 3 : (negativeDelta and cvdDowntrend ? 2 : negativeDelta ? 1 : 0)
+shortDeltaScore += deltaBearDiv ? 1 : 0
+
 // ============================================
-// 고확신 조건 (V37 방식)
+// 고확신 조건 (V37 방식 + Delta 강화)
 // ============================================
 
 // [확신도 1] HTF 추세 일치 + 지지선 + 거래량 = 최고 승률
@@ -644,11 +752,17 @@ bool highConf3 = touchBBLower and stochOversold and tf1h_uptrend and volSpike
 // [확신도 4] EMA 정렬 + ADX 강함 + MTF 거래량 = 추세 지속
 bool highConf4 = emaAlignedUp and aboveEMA200 and trendStrong and multiTFVolume
 
+// [확신도 5] Delta 강세 + CVD 상승 + HTF 상승 = 수급 확인
+bool highConf5 = strongPositiveDelta and cvdUptrend and delta3ConsecutiveBuy and tf1h_uptrend
+
+// [확신도 6] Delta 다이버전스 + 과매도 = 반전 수급
+bool highConf6 = deltaBullDiv and (rsiOversold or stochOversold) and nearSupport3d
+
 // 높은 확신도 LONG
-bool highConfidenceLong = highConf1 or highConf2 or highConf3 or highConf4
+bool highConfidenceLong = highConf1 or highConf2 or highConf3 or highConf4 or highConf5 or highConf6
 
 // 확신도 이유
-string confReason = highConf1 ? "HTF+SR+VOL" : highConf2 ? "DIV+OVERSOLD" : highConf3 ? "BB+OVERSOLD" : highConf4 ? "TREND+VOL" : "-"
+string confReason = highConf1 ? "HTF+SR+VOL" : highConf2 ? "DIV+OVERSOLD" : highConf3 ? "BB+OVERSOLD" : highConf4 ? "TREND+VOL" : highConf5 ? "DELTA+CVD" : highConf6 ? "DELTA_DIV" : "-"
 
 // ============================================
 // 신호 등급 시스템 (30% 강화)
@@ -866,9 +980,9 @@ string psychZone = extremeFear ? "극단적공포" : extremeGreed ? "극단적�
 // ============================================
 
 // EMA
-plot(showEMA ? ema9 : na, color=color.yellow, linewidth=1, title="EMA 9")
+plot(showEMA ? ema8 : na, color=color.yellow, linewidth=1, title="EMA 8")
 plot(showEMA ? ema21 : na, color=color.orange, linewidth=2, title="EMA 21")
-plot(showEMA ? ema50 : na, color=color.blue, linewidth=1, title="EMA 50")
+plot(showEMA ? ema55 : na, color=color.blue, linewidth=1, title="EMA 55")
 plot(showEMA ? ema200 : na, color=color.purple, linewidth=1, title="EMA 200")
 
 // EMA 각도 색상 라인 (추세 강도 시각화)
@@ -878,6 +992,16 @@ plot(showEMAAngle ? emaAngle14 : na, color=emaAngleColor, linewidth=3, title="EM
 plot(showBB ? bbUpper : na, color=color.new(color.gray, 50), linewidth=1, title="BB Upper")
 plot(showBB ? bbBasis : na, color=color.new(color.gray, 70), linewidth=1, title="BB Basis")
 plot(showBB ? bbLower : na, color=color.new(color.gray, 50), linewidth=1, title="BB Lower")
+
+// ============================================
+// 일목균형표 구름 시각화
+// ============================================
+// 선행스팬A/B를 26일 앞에 표시 (offset)
+p1 = plot(showIchimoku ? senkouSpanA : na, offset=displacement, color=color.new(color.green, 80), linewidth=1, title="Senkou A")
+p2 = plot(showIchimoku ? senkouSpanB : na, offset=displacement, color=color.new(color.red, 80), linewidth=1, title="Senkou B")
+
+// 구름 채우기 (양운=초록, 음운=빨강)
+fill(p1, p2, color=senkouSpanA > senkouSpanB ? color.new(color.green, 85) : color.new(color.red, 85), title="Ichimoku Cloud")
 
 // 다이버전스 표시
 plotshape(showDivergence and bullishDivergence, style=shape.labelup, location=location.belowbar, color=color.new(color.green, 20), text="DIV+", textcolor=color.white, size=size.tiny, title="Bullish Div", offset=-pivotRight)
@@ -1175,10 +1299,10 @@ if showInfoTable
         // 현재TF
         string curTFVol = str.tostring(volRatio, "#.#") + "x"
         color curVolColor = volumeExplosion ? color.lime : volSpike ? color.green : color.gray
-        string curEma = emaAlignedUp ? "UP!" : emaAlignedDown ? "DN!" : ema9 > ema21 ? "up" : "dn"
-        color curEmaColor = emaAlignedUp ? color.lime : emaAlignedDown ? color.fuchsia : ema9 > ema21 ? color.green : color.red
+        string curEma = emaAlignedUp ? "UP!" : emaAlignedDown ? "DN!" : ema8 > ema21 ? "up" : "dn"
+        color curEmaColor = emaAlignedUp ? color.lime : emaAlignedDown ? color.fuchsia : ema8 > ema21 ? color.green : color.red
         table.cell(infoTbl, 0, 1, timeframe.period, text_color=color.blue, text_size=size.tiny)
-        table.cell(infoTbl, 1, 1, ema9 > ema21 ? "UP" : "DN", text_color=ema9 > ema21 ? color.green : color.red, text_size=size.tiny)
+        table.cell(infoTbl, 1, 1, ema8 > ema21 ? "UP" : "DN", text_color=ema8 > ema21 ? color.green : color.red, text_size=size.tiny)
         table.cell(infoTbl, 2, 1, curEma, text_color=curEmaColor, text_size=size.tiny)
         table.cell(infoTbl, 3, 1, macdBullish ? "BULL" : "BEAR", text_color=macdBullish ? color.green : color.red, text_size=size.tiny)
         table.cell(infoTbl, 4, 1, curTFVol, text_color=curVolColor, text_size=size.tiny)
@@ -1356,11 +1480,54 @@ if showInfoTable
 // ============================================
 
 if showMiniPanel and isMinimalMode and barstate.islast
-    var table miniTbl = table.new(position.top_right, 4, 8, bgcolor=color.new(color.black, 20), border_width=1)
+    var table miniTbl = table.new(position.top_right, 4, 12, bgcolor=color.new(color.black, 20), border_width=1)
 
-    // 모드 표시
-    string modeText = tradeMode == "선물" ? "F" : tradeMode == "현물" ? "S" : "K"
-    color modeBgColor = tradeMode == "선물" ? color.orange : tradeMode == "현물" ? color.teal : color.purple
+    // ========== 🟢 LONG 신호등 판단 로직 ==========
+    // 🟢 롱OK: 모든 핵심 조건 충족 + 구름 필터
+    // 🟡 대기: 일부 조건만 충족
+    // 🔴 위험: 역방향 또는 위험 구간
+
+    // 구름 필터: 활성화시 구름 아래면 롱 신호 차단
+    bool cloudLongOK = not ichimokuFilter or priceAboveCloud or priceInCloud
+    bool cloudShortOK = not ichimokuFilter or priceBelowCloud or priceInCloud
+
+    bool isLongGreen = smartTrailUp and tf1h_uptrend and longScore >= 16 and pricePosition < 30 and (deltaGrade == "STRONG BUY" or deltaGrade == "BUY" or deltaGrade == "NEUTRAL") and cloudLongOK
+    bool isLongRed = exitLongSignal or (pricePosition > 70 and (deltaGrade == "STRONG SELL" or deltaGrade == "SELL")) or (not smartTrailUp and not tf1h_uptrend) or (ichimokuFilter and priceBelowCloud)
+
+    string longLightEmoji = isLongGreen ? "🟢" : isLongRed ? "🔴" : "🟡"
+    string longLightText = isLongGreen ? "롱OK" : isLongRed ? "위험" : "대기"
+    string longLightReason = isLongGreen ? "조건충족!" : isLongRed ? (exitLongSignal ? "청산필요" : (ichimokuFilter and priceBelowCloud) ? "구름아래" : pricePosition > 70 ? "고점주의" : "하락추세") : (not smartTrailUp ? "추세↓" : not tf1h_uptrend ? "1H하락" : longScore < 16 ? "점수부족" : pricePosition >= 30 ? "위치높음" : not cloudLongOK ? "구름확인" : "조건확인")
+    color longLightBg = isLongGreen ? color.new(color.green, 20) : isLongRed ? color.new(color.red, 20) : color.new(color.yellow, 30)
+    color longLightColor = isLongGreen ? color.lime : isLongRed ? color.red : color.yellow
+
+    // ========== 🔴 SHORT 신호등 판단 로직 ==========
+    // 🟢 숏OK: 하락 조건 충족 (고점 + 하락추세 + 매도세) + 구름 필터
+    // 🟡 대기: 일부 조건만 충족
+    // 🔴 위험: 상승 추세 중
+
+    bool isShortGreen = not smartTrailUp and not tf1h_uptrend and not tf4h_uptrend and pricePosition > 70 and (deltaGrade == "STRONG SELL" or deltaGrade == "SELL") and cloudShortOK
+    bool isShortRed = (smartTrailUp and tf1h_uptrend and pricePosition < 50) or (ichimokuFilter and priceAboveCloud)
+
+    string shortLightEmoji = isShortGreen ? "🟢" : isShortRed ? "🔴" : "🟡"
+    string shortLightText = isShortGreen ? "숏OK" : isShortRed ? "위험" : "대기"
+    string shortLightReason = isShortGreen ? "하락조건!" : isShortRed ? ((ichimokuFilter and priceAboveCloud) ? "구름위" : smartTrailUp ? "상승추세" : "저점주의") : (smartTrailUp ? "추세↑" : tf1h_uptrend ? "1H상승" : pricePosition <= 70 ? "위치낮음" : not cloudShortOK ? "구름확인" : deltaGrade == "NEUTRAL" ? "수급중립" : "조건확인")
+    color shortLightBg = isShortGreen ? color.new(color.fuchsia, 20) : isShortRed ? color.new(color.red, 20) : color.new(color.yellow, 30)
+    color shortLightColor = isShortGreen ? color.fuchsia : isShortRed ? color.red : color.yellow
+
+    // Row 0: 🚦 LONG 신호등
+    table.cell(miniTbl, 0, 0, "📈LONG", text_color=color.white, bgcolor=color.new(color.teal, 30), text_size=size.normal)
+    table.cell(miniTbl, 1, 0, longLightEmoji + longLightText, text_color=longLightColor, bgcolor=longLightBg, text_size=size.large)
+    table.cell(miniTbl, 2, 0, longLightReason, text_color=longLightColor, bgcolor=longLightBg, text_size=size.small)
+    table.cell(miniTbl, 3, 0, str.tostring(longScore, "#") + "pt", text_color=longLightColor, bgcolor=longLightBg, text_size=size.normal)
+
+    // Row 1: 🚦 SHORT 신호등 (선물모드에서만 강조)
+    color shortRowBg = isFutures ? shortLightBg : color.new(color.gray, 60)
+    color shortRowColor = isFutures ? shortLightColor : color.gray
+    string shortDisplay = isFutures ? shortLightEmoji + shortLightText : "현물모드"
+    table.cell(miniTbl, 0, 1, "📉SHORT", text_color=color.white, bgcolor=color.new(color.purple, 30), text_size=size.normal)
+    table.cell(miniTbl, 1, 1, shortDisplay, text_color=shortRowColor, bgcolor=shortRowBg, text_size=size.large)
+    table.cell(miniTbl, 2, 1, isFutures ? shortLightReason : "숏불가", text_color=shortRowColor, bgcolor=shortRowBg, text_size=size.small)
+    table.cell(miniTbl, 3, 1, isFutures ? (isShortGreen ? "GO!" : "") : "", text_color=color.fuchsia, bgcolor=shortRowBg, text_size=size.normal)
 
     // 시그널 상태
     string sigText = superLong ? "SUPER" : strongLong ? "STRONG" : normalLong ? "LONG" : exitLongSignal ? "EXIT!" : "WAIT"
@@ -1368,91 +1535,98 @@ if showMiniPanel and isMinimalMode and barstate.islast
     color sigBg = superLong ? color.new(color.aqua, 50) : exitLongSignal ? color.new(color.red, 50) : color.new(color.gray, 70)
 
     // 현재 상태
-    string statusText = exitLongSignal ? "EXIT NOW" : trailFlipToShort ? "WARNING" : smartTrailUp ? "HOLD" : "WAIT"
+    string statusText = exitLongSignal ? "청산!" : trailFlipToShort ? "주의" : smartTrailUp ? "보유" : "대기"
     color statusColor = exitLongSignal ? color.red : trailFlipToShort ? color.orange : smartTrailUp ? color.lime : color.gray
 
-    // LONG/SHORT 유리 판단
-    bool longFavorable = smartTrailUp and tf1h_uptrend and longScore >= 15
-    bool shortFavorable = not smartTrailUp and not tf1h_uptrend and pricePosition > 70
-    string biasIcon = longFavorable ? "▲ LONG" : shortFavorable ? "▼ SHORT" : "— WAIT"
-    color biasColor = longFavorable ? color.lime : shortFavorable ? color.red : color.gray
-    color biasBg = longFavorable ? color.new(color.green, 30) : shortFavorable ? color.new(color.red, 30) : color.new(color.gray, 70)
-
-    // 조건 힌트 (왜 LONG/SHORT/WAIT인지)
-    string condHint = ""
-    if longFavorable
-        condHint := "Trail↑ 1H↑ " + str.tostring(longScore, "#") + "pt"
-    else if shortFavorable
-        condHint := "Trail↓ 1H↓ " + str.tostring(pricePosition, "#") + "%"
-    else
-        // WAIT 상태일 때 부족한 조건 표시
-        string missing = ""
-        if not smartTrailUp
-            missing := "Trail↓"
-        else if not tf1h_uptrend
-            missing := "1H↓"
-        else if longScore < 15
-            missing := str.tostring(longScore, "#") + "pt<15"
-        condHint := missing
-
-    // Row 0: 방향 표시 (가장 눈에 띄게)
-    table.cell(miniTbl, 0, 0, biasIcon, text_color=biasColor, bgcolor=biasBg, text_size=size.huge)
-    table.cell(miniTbl, 1, 0, condHint, text_color=biasColor, bgcolor=biasBg, text_size=size.small)
-    table.cell(miniTbl, 2, 0, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.lime : color.white, bgcolor=biasBg, text_size=size.large)
-    table.cell(miniTbl, 3, 0, currentGrade, text_color=longScore >= 19 ? color.yellow : color.white, bgcolor=biasBg, text_size=size.large)
-
-    // EMA 각도 상태
-    string emaAngleStatus = emaStrongUp ? "▲▲" : emaWeakUp ? "▲" : emaSideways ? "—" : "▼"
+    // EMA 각도 상태 + 한글
+    string emaAngleStatus = emaStrongUp ? "▲▲강세" : emaWeakUp ? "▲상승" : emaSideways ? "-횡보" : "▼하락"
     color emaAngleStatusColor = emaStrongUp ? color.lime : emaWeakUp ? color.yellow : emaSideways ? color.orange : color.red
 
-    // Row 1: 헤더
-    table.cell(miniTbl, 0, 1, "V39", text_color=color.white, bgcolor=color.blue, text_size=size.normal)
-    table.cell(miniTbl, 1, 1, emaAngleStatus, text_color=emaAngleStatusColor, bgcolor=color.new(color.gray, 50), text_size=size.normal)
-    table.cell(miniTbl, 2, 1, timeframe.period, text_color=color.white, bgcolor=color.gray, text_size=size.normal)
-    table.cell(miniTbl, 3, 1, smartTrailUp ? "L" : "S", text_color=smartTrailUp ? color.lime : color.red, bgcolor=color.new(color.gray, 50), text_size=size.normal)
+    // Row 2: 헤더
+    table.cell(miniTbl, 0, 2, "V39", text_color=color.white, bgcolor=color.blue, text_size=size.normal)
+    table.cell(miniTbl, 1, 2, emaAngleStatus, text_color=emaAngleStatusColor, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(miniTbl, 2, 2, timeframe.period, text_color=color.white, bgcolor=color.gray, text_size=size.normal)
+    table.cell(miniTbl, 3, 2, smartTrailUp ? "추세↑" : "추세↓", text_color=smartTrailUp ? color.lime : color.red, bgcolor=color.new(color.gray, 50), text_size=size.small)
 
-    // Row 2: 시그널
-    table.cell(miniTbl, 0, 2, "Signal", text_color=color.white, bgcolor=color.gray, text_size=size.small)
-    table.cell(miniTbl, 1, 2, sigText, text_color=sigColor, bgcolor=sigBg, text_size=size.large)
-    table.cell(miniTbl, 2, 2, currentGrade, text_color=sigColor, bgcolor=sigBg, text_size=size.large)
-    table.cell(miniTbl, 3, 2, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.green : color.gray, bgcolor=sigBg, text_size=size.small)
+    // Row 3: 시그널
+    string sigKorean = superLong ? "최강매수" : strongLong ? "강력매수" : normalLong ? "매수" : exitLongSignal ? "청산!" : "대기"
+    table.cell(miniTbl, 0, 3, "시그널", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 1, 3, sigText, text_color=sigColor, bgcolor=sigBg, text_size=size.large)
+    table.cell(miniTbl, 2, 3, sigKorean, text_color=sigColor, bgcolor=sigBg, text_size=size.small)
+    table.cell(miniTbl, 3, 3, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.green : color.gray, bgcolor=sigBg, text_size=size.small)
 
-    // Row 3: 추세
-    table.cell(miniTbl, 0, 3, "추세", text_color=color.white, bgcolor=color.gray, text_size=size.small)
-    table.cell(miniTbl, 1, 3, str.tostring(uptrendCount) + "/4", text_color=uptrendCount >= 3 ? color.green : color.gray, text_size=size.small)
-    table.cell(miniTbl, 2, 3, tf1h_uptrend ? "1H:UP" : "1H:DN", text_color=tf1h_uptrend ? color.green : color.red, text_size=size.small)
-    table.cell(miniTbl, 3, 3, tf4h_uptrend ? "4H:UP" : "4H:DN", text_color=tf4h_uptrend ? color.green : color.red, text_size=size.small)
+    // Row 4: 추세 + 한글 해석
+    string trendKorean = uptrendCount >= 3 ? "좋음" : uptrendCount >= 2 ? "보통" : "나쁨"
+    color trendKoreanColor = uptrendCount >= 3 ? color.lime : uptrendCount >= 2 ? color.yellow : color.red
+    table.cell(miniTbl, 0, 4, "추세", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 1, 4, str.tostring(uptrendCount) + "/4 " + trendKorean, text_color=trendKoreanColor, text_size=size.small)
+    table.cell(miniTbl, 2, 4, tf1h_uptrend ? "1H상승" : "1H하락", text_color=tf1h_uptrend ? color.green : color.red, text_size=size.small)
+    table.cell(miniTbl, 3, 4, tf4h_uptrend ? "4H상승" : "4H하락", text_color=tf4h_uptrend ? color.green : color.red, text_size=size.small)
 
-    // Row 4: 위치/거래량
-    table.cell(miniTbl, 0, 4, "위치", text_color=color.white, bgcolor=color.gray, text_size=size.small)
-    table.cell(miniTbl, 1, 4, str.tostring(pricePosition, "#") + "%", text_color=nearSupport3d ? color.green : nearResistance3d ? color.red : color.gray, text_size=size.small)
-    table.cell(miniTbl, 2, 4, "Vol", text_color=color.white, bgcolor=color.gray, text_size=size.small)
-    table.cell(miniTbl, 3, 4, str.tostring(volRatio, "#.#") + "x", text_color=volSpike ? color.green : color.gray, text_size=size.small)
+    // Row 5: 위치 + 한글 해석
+    string posKorean = pricePosition < 20 ? "저점OK" : pricePosition < 40 ? "양호" : pricePosition < 60 ? "중간" : pricePosition < 80 ? "높음" : "고점!"
+    color posKoreanColor = pricePosition < 20 ? color.lime : pricePosition < 40 ? color.green : pricePosition < 60 ? color.yellow : pricePosition < 80 ? color.orange : color.red
+    table.cell(miniTbl, 0, 5, "위치", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 1, 5, str.tostring(pricePosition, "#") + "% " + posKorean, text_color=posKoreanColor, text_size=size.small)
+    table.cell(miniTbl, 2, 5, "거래량", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 3, 5, str.tostring(volRatio, "#.#") + "x", text_color=volSpike ? color.green : color.gray, text_size=size.small)
 
-    // Row 5: 상태
+    // Row 6: 상태 + 한글
     color statusBg = exitLongSignal ? color.new(color.red, 50) : trailFlipToShort ? color.new(color.orange, 60) : color.new(color.gray, 70)
-    table.cell(miniTbl, 0, 5, "STATUS", text_color=color.white, bgcolor=color.navy, text_size=size.small)
-    table.cell(miniTbl, 1, 5, statusText, text_color=statusColor, bgcolor=statusBg, text_size=size.large)
-    table.cell(miniTbl, 2, 5, inDiscount ? "DISC" : inPremium ? "PREM" : "MID", text_color=inDiscount ? color.green : inPremium ? color.red : color.gray, bgcolor=statusBg, text_size=size.small)
-    table.cell(miniTbl, 3, 5, superLong ? "GO!!" : strongLong ? "GO!" : exitLongSignal ? "OUT!" : "", text_color=superLong ? color.aqua : strongLong ? color.yellow : color.red, bgcolor=statusBg, text_size=size.normal)
+    string zoneKorean = inDiscount ? "저점구간" : inPremium ? "고점구간" : "중간"
+    table.cell(miniTbl, 0, 6, "상태", text_color=color.white, bgcolor=color.navy, text_size=size.small)
+    table.cell(miniTbl, 1, 6, statusText, text_color=statusColor, bgcolor=statusBg, text_size=size.large)
+    table.cell(miniTbl, 2, 6, zoneKorean, text_color=inDiscount ? color.green : inPremium ? color.red : color.gray, bgcolor=statusBg, text_size=size.small)
+    table.cell(miniTbl, 3, 6, superLong ? "GO!!" : strongLong ? "GO!" : exitLongSignal ? "OUT!" : "", text_color=superLong ? color.aqua : strongLong ? color.yellow : color.red, bgcolor=statusBg, text_size=size.normal)
 
-    // Row 6: 고래 정보
-    string whaleStatus = whaleBuy ? "🐋BUY" : whaleSell ? "🐋SELL" : "-"
+    // Row 7: 고래 + 한글
+    string whaleKoreanText = whaleBuy ? "대량매수" : whaleSell ? "대량매도" : "없음"
     color whaleBg = whaleBuy ? color.new(color.blue, 50) : whaleSell ? color.new(color.purple, 50) : color.new(color.gray, 70)
     color whaleColor = whaleBuy ? color.aqua : whaleSell ? color.fuchsia : color.gray
-    table.cell(miniTbl, 0, 6, "WHALE", text_color=color.white, bgcolor=color.new(color.purple, 30), text_size=size.small)
-    table.cell(miniTbl, 1, 6, whaleStatus, text_color=whaleColor, bgcolor=whaleBg, text_size=size.normal)
-    table.cell(miniTbl, 2, 6, isWhaleVolume ? str.tostring(volRatio, "#.#") + "x" : "-", text_color=isWhaleVolume ? color.yellow : color.gray, bgcolor=whaleBg, text_size=size.small)
-    table.cell(miniTbl, 3, 6, whaleBuy or whaleSell ? whaleStrength : "", text_color=color.yellow, bgcolor=whaleBg, text_size=size.small)
+    table.cell(miniTbl, 0, 7, "고래", text_color=color.white, bgcolor=color.new(color.purple, 30), text_size=size.small)
+    table.cell(miniTbl, 1, 7, whaleKoreanText, text_color=whaleColor, bgcolor=whaleBg, text_size=size.small)
+    table.cell(miniTbl, 2, 7, isWhaleVolume ? str.tostring(volRatio, "#.#") + "x" : "-", text_color=isWhaleVolume ? color.yellow : color.gray, bgcolor=whaleBg, text_size=size.small)
+    table.cell(miniTbl, 3, 7, whaleBuy or whaleSell ? whaleStrength : "", text_color=color.yellow, bgcolor=whaleBg, text_size=size.small)
 
-    // Row 7: 심리적 구간
+    // Row 8: 심리 + 더 명확한 한글
     color psychBg = extremeFear ? color.new(color.green, 40) : extremeGreed ? color.new(color.red, 40) : psychBuyZone ? color.new(color.teal, 50) : psychSellZone ? color.new(color.maroon, 50) : color.new(color.gray, 70)
     color psychColor = extremeFear or psychBuyZone ? color.lime : extremeGreed or psychSellZone ? color.red : color.gray
-    string fgScoreText = str.tostring(fearGreedScore, "#")
-    table.cell(miniTbl, 0, 7, "심리", text_color=color.white, bgcolor=color.new(color.navy, 30), text_size=size.small)
-    table.cell(miniTbl, 1, 7, fearGreedEmoji + fearGreedGrade, text_color=psychColor, bgcolor=psychBg, text_size=size.small)
-    table.cell(miniTbl, 2, 7, fgScoreText, text_color=psychColor, bgcolor=psychBg, text_size=size.small)
-    table.cell(miniTbl, 3, 7, nearRoundBelow ? "📍SUP" : nearRoundAbove ? "📍RES" : "", text_color=color.aqua, bgcolor=psychBg, text_size=size.small)
+    string psychAction = extremeFear ? "매수기회" : extremeGreed ? "매도주의" : psychBuyZone ? "매수구간" : psychSellZone ? "매도구간" : "중립"
+    table.cell(miniTbl, 0, 8, "심리", text_color=color.white, bgcolor=color.new(color.navy, 30), text_size=size.small)
+    table.cell(miniTbl, 1, 8, fearGreedEmoji + fearGreedGrade, text_color=psychColor, bgcolor=psychBg, text_size=size.small)
+    table.cell(miniTbl, 2, 8, psychAction, text_color=psychColor, bgcolor=psychBg, text_size=size.small)
+    table.cell(miniTbl, 3, 8, nearRoundBelow ? "지지선" : nearRoundAbove ? "저항선" : "", text_color=color.aqua, bgcolor=psychBg, text_size=size.small)
+
+    // Row 9: Delta + 한글 설명
+    string deltaKorean = deltaGrade == "STRONG BUY" ? "강매수세" : deltaGrade == "BUY" ? "매수세" : deltaGrade == "STRONG SELL" ? "강매도세" : deltaGrade == "SELL" ? "매도세" : "중립"
+    string cvdKorean = cvdUptrend ? "매수누적" : cvdDowntrend ? "매도누적" : "중립"
+    color deltaBg = deltaGrade == "STRONG BUY" ? color.new(color.lime, 40) : deltaGrade == "BUY" ? color.new(color.green, 50) : deltaGrade == "STRONG SELL" ? color.new(color.fuchsia, 40) : deltaGrade == "SELL" ? color.new(color.red, 50) : color.new(color.gray, 70)
+    table.cell(miniTbl, 0, 9, "수급", text_color=color.white, bgcolor=color.new(color.teal, 30), text_size=size.small)
+    table.cell(miniTbl, 1, 9, deltaKorean, text_color=deltaColor, bgcolor=deltaBg, text_size=size.small)
+    table.cell(miniTbl, 2, 9, str.tostring(deltaRatio, "#") + "%", text_color=deltaColor, bgcolor=deltaBg, text_size=size.small)
+    table.cell(miniTbl, 3, 9, cvdKorean, text_color=cvdUptrend ? color.lime : cvdDowntrend ? color.red : color.gray, bgcolor=deltaBg, text_size=size.small)
+
+    // Row 10: 일목 구름 상태
+    string cloudKorean = priceAboveCloud ? "구름위" : priceBelowCloud ? "구름아래" : "구름내"
+    string cloudType = bullishCloud ? "양운" : "음운"
+    string cloudAction = priceAboveCloud ? "롱유리" : priceBelowCloud ? "숏유리" : "관망"
+    color cloudBg = priceAboveCloud ? color.new(color.lime, 40) : priceBelowCloud ? color.new(color.red, 40) : color.new(color.yellow, 50)
+    color cloudTextColor = priceAboveCloud ? color.lime : priceBelowCloud ? color.red : color.yellow
+    table.cell(miniTbl, 0, 10, "구름", text_color=color.white, bgcolor=color.new(color.purple, 30), text_size=size.small)
+    table.cell(miniTbl, 1, 10, cloudKorean, text_color=cloudTextColor, bgcolor=cloudBg, text_size=size.small)
+    table.cell(miniTbl, 2, 10, cloudType, text_color=bullishCloud ? color.lime : color.red, bgcolor=cloudBg, text_size=size.small)
+    table.cell(miniTbl, 3, 10, cloudAction, text_color=cloudTextColor, bgcolor=cloudBg, text_size=size.small)
+
+    // Row 11: 요약 조언
+    string longAdvice = isLongGreen ? "롱 진입 고려" : isLongRed ? "롱 위험!" : "롱 대기"
+    string shortAdvice = isShortGreen ? "숏 진입 고려" : isShortRed ? "숏 위험!" : "숏 대기"
+    string finalAdvice = isLongGreen ? longAdvice : (isFutures and isShortGreen) ? shortAdvice : (isLongRed and isFutures and not isShortRed) ? "숏 검토?" : "관망 추천"
+    color adviceBg = isLongGreen ? color.new(color.green, 30) : (isFutures and isShortGreen) ? color.new(color.fuchsia, 30) : color.new(color.gray, 50)
+    color adviceColor = isLongGreen ? color.lime : (isFutures and isShortGreen) ? color.fuchsia : color.gray
+    table.cell(miniTbl, 0, 11, "조언", text_color=color.white, bgcolor=color.navy, text_size=size.small)
+    table.cell(miniTbl, 1, 11, finalAdvice, text_color=adviceColor, bgcolor=adviceBg, text_size=size.small)
+    table.cell(miniTbl, 2, 11, "", text_color=color.gray, bgcolor=adviceBg, text_size=size.small)
+    table.cell(miniTbl, 3, 11, "", text_color=color.gray, bgcolor=adviceBg, text_size=size.small)
 
 // ============================================
 // 알림 (참고용 - 투자권유 아님)
@@ -1475,8 +1649,9 @@ if superLong
     string m5 = "📈 추세: " + trendStrength + " | 위치: " + str.tostring(pricePosition, "#") + "%"
     string m6 = "📊 TF:" + str.tostring(uptrendCount) + "/4 | Vol:" + str.tostring(volSpikeCount) + "/4"
     string m7 = "📉 거래량: " + str.tostring(volRatio, "#.#") + "x | 매수압력: " + str.tostring(buyPressure, "#") + "%"
+    string m7b = "📊 Delta: " + deltaGrade + " | CVD: " + (cvdUptrend ? "상승↑" : cvdDowntrend ? "하락↓" : "중립")
     string m8 = disclaimer
-    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7 + "\n" + m8
+    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7 + "\n" + m7b + "\n" + m8
     alert(msg, freq=alert.freq_once_per_bar_close)
 
 if strongLong and not superLong
@@ -1487,8 +1662,9 @@ if strongLong and not superLong
     string m5 = "📈 추세: " + trendStrength + " | 위치: " + str.tostring(pricePosition, "#") + "%"
     string m6 = "📊 TF:" + str.tostring(uptrendCount) + "/4 | EMA:" + str.tostring(emaAlignedUpCount) + "/5"
     string m7 = "📉 거래량: " + str.tostring(volRatio, "#.#") + "x | 매수압력: " + str.tostring(buyPressure, "#") + "%"
+    string m7b = "📊 Delta: " + deltaGrade + " | CVD: " + (cvdUptrend ? "상승↑" : cvdDowntrend ? "하락↓" : "중립")
     string m8 = disclaimer
-    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7 + "\n" + m8
+    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7 + "\n" + m7b + "\n" + m8
     alert(msg, freq=alert.freq_once_per_bar_close)
 
 if normalLong and signalMode == "전체"
@@ -1578,5 +1754,41 @@ if showWhale and whaleSell
     string w5 = "📉 가격변동: -" + str.tostring(priceChangePercent, "#.##") + "%"
     string w6 = "📉 매도압력: " + str.tostring(100 - buyPressure, "#") + "% | " + disclaimer
     alert(w1 + "\n" + w2 + "\n" + w3 + "\n" + w4 + "\n" + w5 + "\n" + w6, freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// Delta 급증 알림 (수급 급변)
+// ============================================
+
+if showVolumeDelta and isDeltaSpike and strongPositiveDelta
+    string d1 = "📈📈 DELTA 급증 (매수) 📈📈"
+    string d2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string d3 = "━━━━━━━━━━━━━━"
+    string d4 = "📊 Delta: " + str.tostring(deltaRatio, "#") + "% (평균 " + str.tostring(deltaSpike, "#.#") + "배)"
+    string d5 = "📈 CVD: " + (cvdUptrend ? "상승 추세" : "하락 추세")
+    string d6 = delta3ConsecutiveBuy ? "✅ 3봉 연속 매수 우세\n" : ""
+    string d7 = disclaimer
+    string deltaMsg1 = d1 + "\n" + d2 + "\n" + d3 + "\n" + d4 + "\n" + d5 + "\n" + d6 + d7
+    alert(deltaMsg1, freq=alert.freq_once_per_bar_close)
+
+if showVolumeDelta and isDeltaSpike and strongNegativeDelta
+    string d1 = "📉📉 DELTA 급증 (매도) 📉📉"
+    string d2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string d3 = "━━━━━━━━━━━━━━"
+    string d4 = "📊 Delta: " + str.tostring(deltaRatio, "#") + "% (평균 " + str.tostring(deltaSpike, "#.#") + "배)"
+    string d5 = "📉 CVD: " + (cvdUptrend ? "상승 추세" : "하락 추세")
+    string d6 = delta3ConsecutiveSell ? "⚠️ 3봉 연속 매도 우세\n" : ""
+    string d7 = disclaimer
+    string deltaMsg2 = d1 + "\n" + d2 + "\n" + d3 + "\n" + d4 + "\n" + d5 + "\n" + d6 + d7
+    alert(deltaMsg2, freq=alert.freq_once_per_bar_close)
+
+// Delta 다이버전스 알림
+if showVolumeDelta and deltaBullDiv and nearSupport3d
+    string d1 = "🔄 Delta 강세 다이버전스!"
+    string d2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string d3 = "━━━━━━━━━━━━━━"
+    string d4 = "가격↓ + CVD↑ = 반전 신호"
+    string d5 = "📍 지지선 근처 - 매수 고려"
+    string d6 = disclaimer
+    alert(d1 + "\n" + d2 + "\n" + d3 + "\n" + d4 + "\n" + d5 + "\n" + d6, freq=alert.freq_once_per_bar_close)
 
 

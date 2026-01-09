@@ -14,6 +14,7 @@
 // 텔레그램 봇 토큰 (하드코딩)
 const BOT_TOKEN = "8581875115:AAFVCZKj6YNd6BAhoSl1jzh0WsIEKUF1Nbo";
 const OPENAI_API_KEY = "YOUR_OPENAI_API_KEY"; // Settings → Variables에서 설정
+const FINNHUB_API_KEY = "ctaborhr01qhup62c7tgctaborhr01qhup62c7u0"; // Finnhub 무료 API 키 (https://finnhub.io)
 
 const PREMIUM_GROUP_ID = -1003318469200;
 const PREMIUM_GROUP_ID_2 = -1003672890861;
@@ -59,6 +60,36 @@ export default {
       return new Response('4시간 분석이 무료 채널에 발송되었습니다!');
     }
 
+    // 경제 캘린더 수동 테스트
+    if (url.pathname === '/calendar') {
+      ctx.waitUntil(sendEconomicCalendar());
+      return new Response('경제 캘린더가 발송되었습니다!');
+    }
+
+    // 경제 캘린더 (프리미엄 전용)
+    if (url.pathname === '/calendar-premium') {
+      ctx.waitUntil(sendEconomicCalendarPremium());
+      return new Response('프리미엄 경제 캘린더가 발송되었습니다!');
+    }
+
+    // 주간 경제 캘린더 테스트
+    if (url.pathname === '/calendar-weekly') {
+      ctx.waitUntil(sendWeeklyEconomicCalendar());
+      return new Response('주간 경제 캘린더가 프리미엄방에 발송되었습니다!');
+    }
+
+    // 월간 경제 캘린더 테스트
+    if (url.pathname === '/calendar-monthly') {
+      ctx.waitUntil(sendMonthlyEconomicCalendar());
+      return new Response('월간 경제 캘린더가 프리미엄방에 발송되었습니다!');
+    }
+
+    // 프리미엄 도움말 발송
+    if (url.pathname === '/sendhelp') {
+      ctx.waitUntil(sendPremiumHelp());
+      return new Response('프리미엄 도움말이 발송되었습니다!');
+    }
+
     // TradingView 웹훅 수신 (무료 채널용)
     if (url.pathname === '/tradingview' && request.method === 'POST') {
       const text = await request.text();
@@ -70,66 +101,199 @@ export default {
   },
 
   // ============================================
-  // 스케줄 트리거 (4시간마다 자동 분석)
+  // 스케줄 트리거 (cron별 분기 처리)
   // ============================================
   async scheduled(event, env, ctx) {
-    // ctx.waitUntil로 백그라운드 실행 (타임아웃 방지)
-    ctx.waitUntil(runScheduledAnalysis());
+    const cron = event.cron;
+
+    // 매월 1일 (월간 경제 캘린더)
+    if (cron === '0 0 1 * *') {
+      ctx.waitUntil(sendMonthlyEconomicCalendar());
+    }
+    // 매주 월요일 (주간 경제 캘린더)
+    else if (cron === '0 0 * * 1') {
+      ctx.waitUntil(sendWeeklyEconomicCalendar());
+    }
+    // 4시간마다 (무료방 시황)
+    else {
+      ctx.waitUntil(runScheduledAnalysis());
+    }
   }
 };
 
-// 스케줄 작업 실행 함수
+// 스케줄 작업 실행 함수 (API 호출 없이 빠르게)
 async function runScheduledAnalysis() {
+  const now = new Date();
+  const kstHours = (now.getUTCHours() + 9) % 24;
+  const timeStr = `${kstHours.toString().padStart(2, '0')}:00`;
+
   try {
-    await sendMessage(ADMIN_ID, `🕐 Cron 시작`);
-    await send4HourAnalysis();
-    await sendMessage(ADMIN_ID, `✅ Cron 완료!`);
+    // 무료 채널에 고정 메시지 발송 (API 호출 없이)
+    await sendSimpleAnalysis(timeStr);
+    await sendMessage(ADMIN_ID, `✅ Cron 완료! (${timeStr} KST)`);
   } catch (error) {
-    await sendMessage(ADMIN_ID, `⚠️ Cron 에러: ${error.message}`);
+    await sendMessage(ADMIN_ID, `❌ Cron 실패: ${error.message}`);
+  }
+}
+
+// 간단한 4시간 분석 (API 없이)
+async function sendSimpleAnalysis(timeStr) {
+  const analysis = `📊 BTC 4시간봉 체크 (${timeStr} KST)
+
+━━━━━━━━━━━━━━━━
+
+⏰ 정기 분석 시간입니다!
+
+🎯 V39 체크리스트
+
+□ Smart Trail 색상 (라임=상승)
+□ 1H/4H 추세 방향
+□ 위치 (20% 이하 = 매수적합)
+□ 거래량 급증 여부
+□ Delta (▲BUY = 매수세)
+
+━━━━━━━━━━━━━━━━
+
+🚀 SUPER = 최고 신뢰도
+⭐ STRONG = 높은 신뢰도
+🐋 고래 = 대량 거래 감지
+
+━━━━━━━━━━━━━━━━
+
+⚠️ 참고용 - 투자권유 아님
+
+📢 @V38_Signal
+🤖 @V30_Signal_bot`;
+
+  await sendMessage(FREE_CHANNEL_ID, analysis);
+}
+
+// 폴백 분석 (API 실패 시)
+async function sendFallbackAnalysis() {
+  const now = new Date();
+  const kstHours = (now.getUTCHours() + 9) % 24;
+  const timeStr = `${kstHours.toString().padStart(2, '0')}:00`;
+
+  const fallbackMsg = `📊 BTC 4시간봉 리포트 (${timeStr} KST)
+
+━━━━━━━━━━━━━━━━
+
+⏰ 정기 분석 시간입니다!
+
+📈 TradingView에서 V39 지표 확인하세요.
+
+━━━━━━━━━━━━━━━━
+
+🎯 체크리스트
+
+□ Smart Trail 색상 확인
+□ 1H/4H 추세 방향 확인
+□ 위치(DISC/PREM) 확인
+□ 거래량 급증 여부
+
+━━━━━━━━━━━━━━━━
+
+🚀 = SUPER LONG
+⭐ = STRONG LONG
+
+⚠️ 참고용 - 투자권유 아님
+
+📢 @V38_Signal
+🤖 @V30_Signal_bot`;
+
+  await sendMessage(FREE_CHANNEL_ID, fallbackMsg);
+}
+
+// ============================================
+// 타임아웃 fetch 헬퍼
+// ============================================
+async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error(`T/O ${timeoutMs}ms`);
+    }
+    throw error;
   }
 }
 
 // ============================================
-// 4시간 자동 분석 (무료 채널만) - 빠른 API 버전
+// 4시간 자동 분석 (무료 채널만) - 재시도 + 타임아웃 버전
 // ============================================
 async function send4HourAnalysis() {
-  try {
-    // 빠른 simple/price API 사용 (타임아웃 방지)
-    const simpleUrl = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_24hr_high=true&include_24hr_low=true`;
+  const maxRetries = 2;
+  let lastError = null;
+  let btcData = null;
 
-    const response = await fetch(simpleUrl, {
-      headers: { 'Accept': 'application/json' }
-    });
+  // 2회 재시도 (빠르게)
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const simpleUrl = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true`;
 
-    if (!response.ok) {
-      throw new Error(`API ${response.status}`);
+      const response = await fetchWithTimeout(simpleUrl, {
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'V39-Trading-Bot/1.0'
+        }
+      }, 8000); // 8초 타임아웃
+
+      if (!response.ok) {
+        throw new Error(`API ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.bitcoin || !data.bitcoin.usd) {
+        throw new Error('데이터없음');
+      }
+
+      btcData = data.bitcoin;
+      break; // 성공 시 루프 종료
+
+    } catch (error) {
+      lastError = error.message;
+      if (attempt < maxRetries) {
+        // 재시도 전 2초 대기
+        await new Promise(r => setTimeout(r, 2000));
+      }
     }
+  }
 
-    const data = await response.json();
+  const now = new Date();
+  const kstHours = (now.getUTCHours() + 9) % 24;
+  const timeStr = `${kstHours.toString().padStart(2, '0')}:00`;
 
-    if (!data.bitcoin) {
-      throw new Error('BTC 데이터 없음');
-    }
+  let analysis;
+  let success = true;
 
-    const currentPrice = Math.round(data.bitcoin.usd);
-    const changePercent = data.bitcoin.usd_24h_change?.toFixed(2) || "0.00";
-    const high = data.bitcoin.usd_24h_high || currentPrice * 1.02;
-    const low = data.bitcoin.usd_24h_low || currentPrice * 0.98;
+  if (btcData) {
+    // API 성공 - 실제 데이터로 분석
+    const currentPrice = Math.round(btcData.usd);
+    const changePercent = btcData.usd_24h_change?.toFixed(2) || "0.00";
 
-    // 간단한 지표 계산
-    const position = ((currentPrice - low) / (high - low) * 100).toFixed(0);
+    // 변동률 기반 추정
     const trend = changePercent > 0 ? "상승" : "하락";
-    const trendStrength = Math.abs(changePercent) > 3 ? "강한 " : "";
+    const trendStrength = Math.abs(parseFloat(changePercent)) > 3 ? "강한 " : "";
 
     // RSI 추정 (24시간 변동 기반)
-    let rsi = 50 + (changePercent * 2.5);
+    let rsi = 50 + (parseFloat(changePercent) * 2.5);
     rsi = Math.max(20, Math.min(80, rsi)).toFixed(0);
 
-    const now = new Date();
-    const kstHours = (now.getUTCHours() + 9) % 24;
-    const timeStr = `${kstHours.toString().padStart(2, '0')}:00`;
+    // 위치 추정 (변동률 기반)
+    let position = 50 + (parseFloat(changePercent) * 5);
+    position = Math.max(10, Math.min(90, position)).toFixed(0);
 
-    const analysis = `📊 BTC 4시간봉 분석 (${timeStr} KST)
+    analysis = `📊 BTC 4시간봉 분석 (${timeStr} KST)
 
 ━━━━━━━━━━━━━━━━
 
@@ -158,15 +322,46 @@ ${rsi < 30 ? '✅ 과매도 반등 기대' : rsi > 70 ? '⚠️ 과매수 조정
 📢 @V38_Signal
 🤖 @V30_Signal_bot`;
 
-    // 무료 채널에 발송
-    await sendMessage(FREE_CHANNEL_ID, analysis);
-    return { success: true };
+  } else {
+    // API 실패 - 기본 메시지 발송 (채널은 유지)
+    success = false;
+    analysis = `📊 BTC 4시간봉 리포트 (${timeStr} KST)
 
-  } catch (error) {
-    // 에러 시 관리자에게 알림
-    await sendMessage(ADMIN_ID, `⚠️ 4H 분석 실패: ${error.message}`);
-    return { success: false, error: error.message };
+━━━━━━━━━━━━━━━━
+
+⏰ 정기 분석 시간입니다!
+
+📈 현재 시장 상황을 확인해보세요.
+
+━━━━━━━━━━━━━━━━
+
+🎯 체크리스트
+
+□ TradingView V39 지표 확인
+□ Smart Trail 색상 확인
+□ 1H/4H 추세 방향 확인
+□ 위치(DISC/PREM) 확인
+
+━━━━━━━━━━━━━━━━
+
+🚀 = SUPER LONG
+⭐ = STRONG LONG
+🐋 = 고래 활동
+
+⚠️ 참고용 - 투자권유 아님
+
+📢 @V38_Signal
+🤖 @V30_Signal_bot`;
   }
+
+  // 무료 채널에 발송 (성공/실패 모두)
+  try {
+    await sendMessage(FREE_CHANNEL_ID, analysis);
+  } catch (sendError) {
+    return { success: false, error: `발송실패: ${sendError.message}` };
+  }
+
+  return { success, error: lastError };
 }
 
 // ============================================
@@ -890,6 +1085,16 @@ TPpgMe6JxtudoEdDegkyKUaBUyAWRKti12
 ⚠️ 참고용 - 투자권유 아님`;
   }
 
+  // /호가 (오더북 분석)
+  else if (command === '/호가' || command === '/orderbook' || command === '/ob') {
+    responseText = await handleOrderbookCommand(coinInput);
+  }
+
+  // /패턴 (유사 패턴 분석)
+  else if (command === '/패턴' || command === '/pattern' || command === '/pt') {
+    responseText = await handlePatternCommand(coinInput);
+  }
+
   // /smc
   else if (command === '/smc') {
     responseText = `🧠 V39 SMC (Smart Money)
@@ -962,6 +1167,11 @@ TPpgMe6JxtudoEdDegkyKUaBUyAWRKti12
 ⚠️ 참고용 - 투자권유 아님`;
   }
 
+  // /경제 - 경제 캘린더
+  else if (command === '/경제' || command === '/economy' || command === '/calendar' || command === '/cal') {
+    responseText = await handleEconomicCommand();
+  }
+
   // /도움말
   else if (command === '/help' || command === '/도움말') {
     let helpText = `🤖 V39 Premium 명령어
@@ -1000,6 +1210,30 @@ TPpgMe6JxtudoEdDegkyKUaBUyAWRKti12
 /라운드 - 라운드 넘버
 /고점저점 - 고점/저점 구조
 /공포탐욕 - 공포/탐욕 지표
+
+━━━━━━━━━━━━━━━━
+
+🔥 실시간 분석 (Bitget/OKX)
+
+/호가 BTC - 호가창 매수/매도벽
+/패턴 BTC - 유사 패턴 분석 🆕
+
+💡 모든 코인 지원!
+예: /패턴 ETH, /호가 SOL
+
+📈 패턴 분석 정보:
+• 현재 거래량/위치/추세
+• 유사 패턴 상승 확률
+• 평균 변화폭 예측
+
+━━━━━━━━━━━━━━━━
+
+📅 경제 캘린더 🆕
+
+/경제 - 이번 주 주요 경제 일정
+  • FOMC, CPI, NFP 등
+  • 암호화폐 영향 분석
+  • 상승/하락 조건 해석
 
 ━━━━━━━━━━━━━━━━
 
@@ -1414,6 +1648,42 @@ async function sendPremiumHelp() {
 
 ━━━━━━━━━━━━━━━━
 
+🔥 실시간 분석
+
+/호가 BTC - 호가창 매수/매도벽
+/패턴 BTC - 유사 패턴 분석
+
+💡 모든 코인 지원!
+예: /패턴 ETH, /호가 SOL
+
+━━━━━━━━━━━━━━━━
+
+📅 경제 캘린더 🆕
+
+/경제 - 이번 주 경제 일정
+  • FOMC, CPI, NFP 등
+  • 암호화폐 영향 분석
+  • 상승/하락 조건 해석
+
+📌 자동 발송:
+• 매주 월요일 09시 (주간)
+• 매월 1일 09시 (월간)
+
+━━━━━━━━━━━━━━━━
+
+📖 지표 가이드
+
+/가이드 - 핵심 가이드
+/알림 - 알림 설정
+/체크리스트 - 진입 조건
+/청산 - 청산 가이드
+/등급 - 등급 설명
+/고래 - 고래 등급
+/심리 - 심리적 구간
+/smc - SMC/구조 설명
+
+━━━━━━━━━━━━━━━━
+
 ⚠️ 주의사항
 
 • 시그널 ≠ 100% 수익 보장
@@ -1423,6 +1693,7 @@ async function sendPremiumHelp() {
 
 ━━━━━━━━━━━━━━━━
 
+📢 무료 시그널: @V38_Signal
 ❓ 문의: @pointting`;
 
   await sendMessage(PREMIUM_GROUP_ID, helpDoc);
@@ -1431,6 +1702,7 @@ async function sendPremiumHelp() {
 
 // ============================================
 // TradingView 알람 처리 (무료 채널 - 새우~돌고래)
+// + 오더북 분석 결합
 // ============================================
 async function handleTradingViewAlert(alertText) {
   try {
@@ -1446,6 +1718,55 @@ async function handleTradingViewAlert(alertText) {
     const isFreeTier = isDolphin || isFish || isCrab || isShrimp;
     const isBuy = alertText.includes('매수');
     const isSell = alertText.includes('매도');
+
+    // 시그널 종류 파악
+    const isSuperLong = alertText.includes('SUPER LONG') || alertText.includes('🚀');
+    const isStrongLong = alertText.includes('STRONG LONG') || alertText.includes('⭐');
+    const isPremiumSignal = isSuperLong || isStrongLong || isWhale || isShark;
+
+    // 프리미엄 시그널이면 오더북 분석 추가
+    let orderbookInfo = '';
+    if (isPremiumSignal && isBuy) {
+      // 심볼 추출 (기본 BTC)
+      let symbol = 'BTCUSDT';
+      const symbolMatch = alertText.match(/([A-Z]{2,10})\/USDT/);
+      if (symbolMatch) {
+        symbol = symbolMatch[1] + 'USDT';
+      }
+
+      const orderbook = await getBitgetOrderbook(symbol, 20);
+      if (orderbook) {
+        const analysis = analyzeOrderbook(orderbook);
+        if (analysis) {
+          const imbalanceEmoji = parseFloat(analysis.imbalanceRatio) > 0 ? '📈' : '📉';
+          let signalEmoji = '⚪';
+          let signalText = '중립';
+
+          if (analysis.entrySignal === 'LONG') {
+            signalEmoji = '🟢';
+            signalText = '롱 유리';
+          } else if (analysis.entrySignal === 'LONG_WEAK') {
+            signalEmoji = '🟡';
+            signalText = '약한 롱';
+          } else if (analysis.entrySignal === 'SHORT') {
+            signalEmoji = '🔴';
+            signalText = '숏 유리 ⚠️';
+          } else if (analysis.entrySignal === 'SHORT_WEAK') {
+            signalEmoji = '🟠';
+            signalText = '약한 숏';
+          }
+
+          orderbookInfo = `
+━━━━━━━━━━━━━━━━
+📊 실시간 호가창 분석
+
+${imbalanceEmoji} 불균형: ${analysis.imbalanceRatio}%
+🔵 매수: ${analysis.totalBidQty} | 🔴 매도: ${analysis.totalAskQty}
+🧱 매수벽: ${analysis.bidWalls.length}개 | 매도벽: ${analysis.askWalls.length}개
+${signalEmoji} 호가 판단: ${signalText}`;
+        }
+      }
+    }
 
     if (isFreeTier && (isBuy || isSell)) {
       // 등급에 따른 메시지
@@ -1468,6 +1789,17 @@ ${alertText}
       await sendMessage(FREE_CHANNEL_ID, freeChannelMsg);
     }
 
+    // 프리미엄 시그널은 프리미엄 그룹에 오더북 정보와 함께 발송
+    if (isPremiumSignal && (isBuy || isSell)) {
+      const premiumMsg = `${alertText}${orderbookInfo}
+
+━━━━━━━━━━━━━━━━
+🔒 프리미엄 전용`;
+
+      await sendMessage(PREMIUM_GROUP_ID, premiumMsg);
+      await sendMessage(PREMIUM_GROUP_ID_2, premiumMsg);
+    }
+
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -1486,4 +1818,1225 @@ async function sendMessage(chatId, text) {
       text: text
     })
   });
+}
+
+// ============================================
+// 비트겟 오더북 API
+// ============================================
+
+async function getBitgetOrderbook(symbol = 'BTCUSDT', limit = 20) {
+  try {
+    const url = `https://api.bitget.com/api/v2/mix/market/merge-depth?symbol=${symbol}&productType=USDT-FUTURES&limit=${limit}`;
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' }
+    });
+
+    if (!response.ok) {
+      throw new Error(`API 오류: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (data.code !== '00000') {
+      throw new Error(data.msg || '알 수 없는 오류');
+    }
+
+    return data.data;
+  } catch (error) {
+    console.error('오더북 조회 실패:', error);
+    return null;
+  }
+}
+
+// ============================================
+// 오더북 분석 함수
+// ============================================
+
+function analyzeOrderbook(orderbook) {
+  if (!orderbook || !orderbook.asks || !orderbook.bids) {
+    return null;
+  }
+
+  const asks = orderbook.asks.map(a => ({ price: parseFloat(a[0]), qty: parseFloat(a[1]) }));
+  const bids = orderbook.bids.map(b => ({ price: parseFloat(b[0]), qty: parseFloat(b[1]) }));
+
+  // 총 매수/매도 수량
+  const totalBidQty = bids.reduce((sum, b) => sum + b.qty, 0);
+  const totalAskQty = asks.reduce((sum, a) => sum + a.qty, 0);
+
+  // 불균형 비율 (양수 = 매수 우세, 음수 = 매도 우세)
+  const imbalanceRatio = ((totalBidQty - totalAskQty) / (totalBidQty + totalAskQty) * 100).toFixed(1);
+
+  // 매수벽/매도벽 감지 (평균의 3배 이상)
+  const avgBidQty = totalBidQty / bids.length;
+  const avgAskQty = totalAskQty / asks.length;
+
+  const bidWalls = bids.filter(b => b.qty >= avgBidQty * 3);
+  const askWalls = asks.filter(a => a.qty >= avgAskQty * 3);
+
+  // 현재가 (매수1호가와 매도1호가 중간)
+  const bestBid = bids[0]?.price || 0;
+  const bestAsk = asks[0]?.price || 0;
+  const midPrice = (bestBid + bestAsk) / 2;
+  const spread = ((bestAsk - bestBid) / midPrice * 100).toFixed(4);
+
+  // 매수1호가 수량 vs 매도1호가 수량
+  const topBidQty = bids[0]?.qty || 0;
+  const topAskQty = asks[0]?.qty || 0;
+  const topImbalance = topBidQty > topAskQty * 2 ? 'BID' : topAskQty > topBidQty * 2 ? 'ASK' : 'NEUTRAL';
+
+  // 진입 유리 판단
+  let entrySignal = 'NEUTRAL';
+  let entryReason = '';
+
+  if (parseFloat(imbalanceRatio) > 20 && bidWalls.length > 0 && topImbalance === 'BID') {
+    entrySignal = 'LONG';
+    entryReason = '매수벽 + 매수 우세';
+  } else if (parseFloat(imbalanceRatio) > 10 && topImbalance === 'BID') {
+    entrySignal = 'LONG_WEAK';
+    entryReason = '약한 매수 우세';
+  } else if (parseFloat(imbalanceRatio) < -20 && askWalls.length > 0 && topImbalance === 'ASK') {
+    entrySignal = 'SHORT';
+    entryReason = '매도벽 + 매도 우세';
+  } else if (parseFloat(imbalanceRatio) < -10 && topImbalance === 'ASK') {
+    entrySignal = 'SHORT_WEAK';
+    entryReason = '약한 매도 우세';
+  } else {
+    entryReason = '균형 상태';
+  }
+
+  return {
+    midPrice,
+    spread,
+    totalBidQty: totalBidQty.toFixed(2),
+    totalAskQty: totalAskQty.toFixed(2),
+    imbalanceRatio,
+    bidWalls: bidWalls.slice(0, 3),  // 상위 3개
+    askWalls: askWalls.slice(0, 3),
+    topBidQty: topBidQty.toFixed(4),
+    topAskQty: topAskQty.toFixed(4),
+    topImbalance,
+    entrySignal,
+    entryReason
+  };
+}
+
+// ============================================
+// /호가 명령어 처리
+// ============================================
+
+async function handleOrderbookCommand(coinInput = 'BTC') {
+  const coin = coinInput.toUpperCase().replace('USDT', '').replace('USD', '');
+  const symbol = coin + 'USDT';
+
+  const orderbook = await getBitgetOrderbook(symbol, 20);
+
+  if (!orderbook) {
+    return `❌ ${symbol} 오더북 조회 실패
+
+잠시 후 다시 시도해주세요.`;
+  }
+
+  const analysis = analyzeOrderbook(orderbook);
+
+  if (!analysis) {
+    return `❌ 오더북 분석 실패`;
+  }
+
+  // 진입 신호 이모지
+  let signalEmoji = '⚪';
+  let signalText = '중립';
+  if (analysis.entrySignal === 'LONG') {
+    signalEmoji = '🟢';
+    signalText = '롱 유리';
+  } else if (analysis.entrySignal === 'LONG_WEAK') {
+    signalEmoji = '🟡';
+    signalText = '약한 롱';
+  } else if (analysis.entrySignal === 'SHORT') {
+    signalEmoji = '🔴';
+    signalText = '숏 유리';
+  } else if (analysis.entrySignal === 'SHORT_WEAK') {
+    signalEmoji = '🟠';
+    signalText = '약한 숏';
+  }
+
+  // 매수벽 정보
+  let bidWallsText = '없음';
+  if (analysis.bidWalls.length > 0) {
+    bidWallsText = analysis.bidWalls
+      .map(w => `$${w.price.toFixed(1)} (${w.qty.toFixed(2)} BTC)`)
+      .join('\n   ');
+  }
+
+  // 매도벽 정보
+  let askWallsText = '없음';
+  if (analysis.askWalls.length > 0) {
+    askWallsText = analysis.askWalls
+      .map(w => `$${w.price.toFixed(1)} (${w.qty.toFixed(2)} BTC)`)
+      .join('\n   ');
+  }
+
+  const imbalanceEmoji = parseFloat(analysis.imbalanceRatio) > 0 ? '📈' : '📉';
+
+  return `📊 ${symbol} 호가창 분석
+
+━━━━━━━━━━━━━━━━
+
+💰 현재가: $${analysis.midPrice.toFixed(1)}
+📏 스프레드: ${analysis.spread}%
+
+━━━━━━━━━━━━━━━━
+
+📈 매수 총량: ${analysis.totalBidQty} ${coin}
+📉 매도 총량: ${analysis.totalAskQty} ${coin}
+${imbalanceEmoji} 불균형: ${analysis.imbalanceRatio}%
+
+━━━━━━━━━━━━━━━━
+
+🔵 매수 1호가: ${analysis.topBidQty} ${coin}
+🔴 매도 1호가: ${analysis.topAskQty} ${coin}
+⚖️ 1호가 우세: ${analysis.topImbalance === 'BID' ? '매수' : analysis.topImbalance === 'ASK' ? '매도' : '균형'}
+
+━━━━━━━━━━━━━━━━
+
+🧱 매수벽 (지지):
+   ${bidWallsText}
+
+🧱 매도벽 (저항):
+   ${askWallsText}
+
+━━━━━━━━━━━━━━━━
+
+${signalEmoji} 진입 판단: ${signalText}
+💡 ${analysis.entryReason}
+
+━━━━━━━━━━━━━━━━
+
+⚠️ 참고용 - 투자권유 아님`;
+}
+
+// ============================================
+// TradingView + 오더북 결합 분석
+// ============================================
+
+async function analyzeWithOrderbook(alertText) {
+  // 시그널 종류 파악
+  const isSuperLong = alertText.includes('SUPER LONG') || alertText.includes('🚀');
+  const isStrongLong = alertText.includes('STRONG LONG') || alertText.includes('⭐');
+  const isLong = isSuperLong || isStrongLong || alertText.includes('LONG');
+
+  if (!isLong) {
+    return null;  // 롱 시그널 아니면 패스
+  }
+
+  // 심볼 추출 (기본 BTC)
+  let symbol = 'BTCUSDT';
+  const symbolMatch = alertText.match(/([A-Z]{2,10})\/USDT/);
+  if (symbolMatch) {
+    symbol = symbolMatch[1] + 'USDT';
+  }
+
+  // 오더북 분석
+  const orderbook = await getBitgetOrderbook(symbol, 20);
+  if (!orderbook) {
+    return { confirmed: false, reason: '오더북 조회 실패' };
+  }
+
+  const analysis = analyzeOrderbook(orderbook);
+  if (!analysis) {
+    return { confirmed: false, reason: '오더북 분석 실패' };
+  }
+
+  // 오더북이 롱에 유리한지 확인
+  const isOrderbookBullish = analysis.entrySignal === 'LONG' || analysis.entrySignal === 'LONG_WEAK';
+  const isOrderbookBearish = analysis.entrySignal === 'SHORT' || analysis.entrySignal === 'SHORT_WEAK';
+
+  if (isOrderbookBullish) {
+    return {
+      confirmed: true,
+      strength: analysis.entrySignal === 'LONG' ? 'STRONG' : 'WEAK',
+      reason: analysis.entryReason,
+      imbalance: analysis.imbalanceRatio,
+      bidWalls: analysis.bidWalls.length
+    };
+  } else if (isOrderbookBearish) {
+    return {
+      confirmed: false,
+      reason: `오더북 매도 우세 (${analysis.imbalanceRatio}%)`,
+      imbalance: analysis.imbalanceRatio
+    };
+  } else {
+    return {
+      confirmed: 'NEUTRAL',
+      reason: '오더북 균형 상태',
+      imbalance: analysis.imbalanceRatio
+    };
+  }
+}
+
+// ============================================
+// 패턴 분석 기능 (Bitget API 기반)
+// ============================================
+
+// OKX에서 과거 캔들 데이터 가져오기
+async function getOKXCandles(symbol = 'BTC-USDT', interval = '4H', limit = 200) {
+  try {
+    // OKX API - 현물 캔들
+    const url = `https://www.okx.com/api/v5/market/candles?instId=${symbol}&bar=${interval}&limit=${limit}`;
+
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      console.error('OKX candles API error:', response.status);
+      return { error: `API응답오류: ${response.status}` };
+    }
+
+    const result = await response.json();
+
+    if (result.code !== '0' || !result.data || !Array.isArray(result.data)) {
+      return { error: `API데이터오류: ${result.msg || result.code}` };
+    }
+
+    if (result.data.length === 0) {
+      return { error: '데이터없음' };
+    }
+
+    // OKX 데이터 형식: [timestamp, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
+    // 최신 데이터가 먼저 오므로 역순으로 정렬
+    const candles = [...result.data].reverse().map(c => ({
+      timestamp: parseInt(c[0]),
+      open: parseFloat(c[1]),
+      high: parseFloat(c[2]),
+      low: parseFloat(c[3]),
+      close: parseFloat(c[4]),
+      volume: parseFloat(c[5]),
+      quoteVolume: parseFloat(c[7])
+    }));
+
+    return candles;
+  } catch (error) {
+    console.error('getOKXCandles error:', error);
+    return { error: `예외발생: ${error.message}` };
+  }
+}
+
+// RSI 계산
+function calculateRSI(candles, period = 14) {
+  if (candles.length < period + 1) return null;
+
+  const changes = [];
+  for (let i = 1; i < candles.length; i++) {
+    changes.push(candles[i].close - candles[i-1].close);
+  }
+
+  let gains = 0, losses = 0;
+  for (let i = 0; i < period; i++) {
+    if (changes[i] > 0) gains += changes[i];
+    else losses -= changes[i];
+  }
+
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+
+  // 전체 캔들에 대해 RSI 계산
+  const rsiValues = [];
+  for (let i = period; i < changes.length; i++) {
+    const change = changes[i];
+    avgGain = (avgGain * (period - 1) + (change > 0 ? change : 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + (change < 0 ? -change : 0)) / period;
+
+    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    rsiValues.push(100 - (100 / (1 + rs)));
+  }
+
+  return rsiValues;
+}
+
+// 이동평균 계산
+function calculateSMA(values, period) {
+  const result = [];
+  for (let i = period - 1; i < values.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < period; j++) {
+      sum += values[i - j];
+    }
+    result.push(sum / period);
+  }
+  return result;
+}
+
+// 거래량 비율 계산
+function calculateVolumeRatio(candles, index, period = 20) {
+  if (index < period) return 1;
+
+  let sumVol = 0;
+  for (let i = index - period; i < index; i++) {
+    sumVol += candles[i].volume;
+  }
+  const avgVol = sumVol / period;
+
+  return candles[index].volume / avgVol;
+}
+
+// 현재 상황 특성 추출
+function extractPatternFeatures(candles, index) {
+  if (index < 20) return null;
+
+  const current = candles[index];
+  const prev = candles[index - 1];
+
+  // 가격 변화율
+  const priceChange = ((current.close - prev.close) / prev.close) * 100;
+
+  // 거래량 비율
+  const volRatio = calculateVolumeRatio(candles, index, 20);
+
+  // 캔들 특성
+  const bodySize = Math.abs(current.close - current.open);
+  const totalRange = current.high - current.low;
+  const bodyRatio = totalRange > 0 ? bodySize / totalRange : 0;
+  const isBullish = current.close > current.open;
+
+  // 위꼬리/아래꼬리
+  const upperWick = current.high - Math.max(current.open, current.close);
+  const lowerWick = Math.min(current.open, current.close) - current.low;
+  const upperWickRatio = totalRange > 0 ? upperWick / totalRange : 0;
+  const lowerWickRatio = totalRange > 0 ? lowerWick / totalRange : 0;
+
+  // 최근 5봉 추세
+  let upCount = 0;
+  for (let i = index - 4; i <= index; i++) {
+    if (candles[i].close > candles[i].open) upCount++;
+  }
+
+  // 20봉 대비 위치
+  let high20 = candles[index].high;
+  let low20 = candles[index].low;
+  for (let i = index - 19; i < index; i++) {
+    high20 = Math.max(high20, candles[i].high);
+    low20 = Math.min(low20, candles[i].low);
+  }
+  const position = high20 !== low20 ? ((current.close - low20) / (high20 - low20)) * 100 : 50;
+
+  return {
+    priceChange,
+    volRatio,
+    bodyRatio,
+    isBullish,
+    upperWickRatio,
+    lowerWickRatio,
+    upCount,
+    position,
+    totalRange: (totalRange / current.close) * 100 // 변동성 (%)
+  };
+}
+
+// 유사도 점수 계산 (0~100)
+function calculateSimilarity(features1, features2) {
+  // 각 특성별 가중치
+  const weights = {
+    volRatio: 25,      // 거래량이 가장 중요
+    position: 20,      // 가격 위치
+    priceChange: 15,   // 가격 변화
+    bodyRatio: 10,     // 캔들 형태
+    upCount: 15,       // 추세
+    upperWickRatio: 7.5,
+    lowerWickRatio: 7.5
+  };
+
+  let totalScore = 0;
+
+  // 거래량 비율 유사도 (1~3x 범위에서 비교)
+  const volDiff = Math.abs(features1.volRatio - features2.volRatio);
+  const volScore = Math.max(0, 100 - volDiff * 30);
+  totalScore += volScore * (weights.volRatio / 100);
+
+  // 위치 유사도
+  const posDiff = Math.abs(features1.position - features2.position);
+  const posScore = Math.max(0, 100 - posDiff);
+  totalScore += posScore * (weights.position / 100);
+
+  // 가격 변화 유사도
+  const priceDiff = Math.abs(features1.priceChange - features2.priceChange);
+  const priceScore = Math.max(0, 100 - priceDiff * 20);
+  totalScore += priceScore * (weights.priceChange / 100);
+
+  // 캔들 형태 유사도
+  const bodyDiff = Math.abs(features1.bodyRatio - features2.bodyRatio);
+  const bodyScore = Math.max(0, 100 - bodyDiff * 100);
+  totalScore += bodyScore * (weights.bodyRatio / 100);
+
+  // 추세 유사도
+  const trendDiff = Math.abs(features1.upCount - features2.upCount);
+  const trendScore = Math.max(0, 100 - trendDiff * 20);
+  totalScore += trendScore * (weights.upCount / 100);
+
+  // 꼬리 유사도
+  const upperDiff = Math.abs(features1.upperWickRatio - features2.upperWickRatio);
+  const lowerDiff = Math.abs(features1.lowerWickRatio - features2.lowerWickRatio);
+  totalScore += Math.max(0, 100 - upperDiff * 100) * (weights.upperWickRatio / 100);
+  totalScore += Math.max(0, 100 - lowerDiff * 100) * (weights.lowerWickRatio / 100);
+
+  return totalScore;
+}
+
+// 유사 패턴 찾기 및 이후 움직임 분석
+function findSimilarPatterns(candles, currentFeatures, minSimilarity = 60) {
+  const results = [];
+
+  // 최근 20봉은 제외하고 검색 (현재 상황과 겹치지 않도록)
+  for (let i = 25; i < candles.length - 25; i++) {
+    const pastFeatures = extractPatternFeatures(candles, i);
+    if (!pastFeatures) continue;
+
+    const similarity = calculateSimilarity(currentFeatures, pastFeatures);
+
+    if (similarity >= minSimilarity) {
+      // 이후 5봉, 10봉, 20봉 움직임 분석
+      const price0 = candles[i].close;
+
+      const after5 = i + 5 < candles.length ? candles[i + 5].close : null;
+      const after10 = i + 10 < candles.length ? candles[i + 10].close : null;
+      const after20 = i + 20 < candles.length ? candles[i + 20].close : null;
+
+      // 최대 상승/하락폭 (10봉 이내)
+      let maxUp = 0, maxDown = 0;
+      for (let j = i + 1; j <= Math.min(i + 10, candles.length - 1); j++) {
+        const change = ((candles[j].high - price0) / price0) * 100;
+        const changeLow = ((candles[j].low - price0) / price0) * 100;
+        maxUp = Math.max(maxUp, change);
+        maxDown = Math.min(maxDown, changeLow);
+      }
+
+      results.push({
+        index: i,
+        date: new Date(candles[i].timestamp).toISOString().split('T')[0],
+        similarity,
+        features: pastFeatures,
+        after5Change: after5 ? ((after5 - price0) / price0) * 100 : null,
+        after10Change: after10 ? ((after10 - price0) / price0) * 100 : null,
+        after20Change: after20 ? ((after20 - price0) / price0) * 100 : null,
+        maxUp,
+        maxDown
+      });
+    }
+  }
+
+  // 유사도 높은 순으로 정렬
+  results.sort((a, b) => b.similarity - a.similarity);
+
+  return results.slice(0, 15); // 상위 15개만
+}
+
+// 패턴 분석 통계 계산
+function calculatePatternStats(patterns) {
+  if (patterns.length === 0) {
+    return { count: 0 };
+  }
+
+  let upCount5 = 0, downCount5 = 0;
+  let upCount10 = 0, downCount10 = 0;
+  let totalChange5 = 0, totalChange10 = 0;
+  let totalMaxUp = 0, totalMaxDown = 0;
+  let validCount5 = 0, validCount10 = 0;
+
+  for (const p of patterns) {
+    if (p.after5Change !== null) {
+      validCount5++;
+      totalChange5 += p.after5Change;
+      if (p.after5Change > 0) upCount5++;
+      else downCount5++;
+    }
+
+    if (p.after10Change !== null) {
+      validCount10++;
+      totalChange10 += p.after10Change;
+      if (p.after10Change > 0) upCount10++;
+      else downCount10++;
+    }
+
+    totalMaxUp += p.maxUp;
+    totalMaxDown += p.maxDown;
+  }
+
+  return {
+    count: patterns.length,
+    // 5봉 후
+    upProb5: validCount5 > 0 ? Math.round((upCount5 / validCount5) * 100) : 0,
+    avgChange5: validCount5 > 0 ? (totalChange5 / validCount5).toFixed(2) : 0,
+    // 10봉 후
+    upProb10: validCount10 > 0 ? Math.round((upCount10 / validCount10) * 100) : 0,
+    avgChange10: validCount10 > 0 ? (totalChange10 / validCount10).toFixed(2) : 0,
+    // 최대 변동폭
+    avgMaxUp: (totalMaxUp / patterns.length).toFixed(2),
+    avgMaxDown: (totalMaxDown / patterns.length).toFixed(2)
+  };
+}
+
+// /패턴 명령어 처리
+async function handlePatternCommand(coinInput = 'BTC') {
+  const symbol = coinInput.toUpperCase() + '-USDT';  // OKX 형식
+
+  try {
+    // 4시간봉 데이터 가져오기 (100개 = 약 16일, OKX 제한)
+    const candles = await getOKXCandles(symbol, '4H', 100);
+
+    // 에러 체크
+    if (candles && candles.error) {
+      return `❌ ${coinInput} 캔들 오류: ${candles.error}`;
+    }
+
+    if (!candles || !Array.isArray(candles) || candles.length < 50) {
+      return `❌ ${coinInput} 캔들 데이터 부족 (${candles?.length || 0}개)`;
+    }
+
+    // 현재 상황 특성 추출
+    const currentIndex = candles.length - 1;
+    const currentFeatures = extractPatternFeatures(candles, currentIndex);
+
+    if (!currentFeatures) {
+      return `❌ 패턴 분석에 필요한 데이터가 부족합니다.`;
+    }
+
+    // 유사 패턴 찾기
+    const similarPatterns = findSimilarPatterns(candles, currentFeatures, 55);
+
+    // 통계 계산
+    const stats = calculatePatternStats(similarPatterns);
+
+    // 현재 상황 설명
+    const volStatus = currentFeatures.volRatio >= 2 ? '📈급증' :
+                      currentFeatures.volRatio >= 1.5 ? '📊증가' :
+                      currentFeatures.volRatio >= 1 ? '보통' : '📉감소';
+
+    const posStatus = currentFeatures.position >= 80 ? '🔴고점권' :
+                      currentFeatures.position >= 60 ? '🟠상단' :
+                      currentFeatures.position >= 40 ? '🟡중간' :
+                      currentFeatures.position >= 20 ? '🟢하단' : '🔵저점권';
+
+    const trendStatus = currentFeatures.upCount >= 4 ? '🚀강상승' :
+                        currentFeatures.upCount >= 3 ? '📈상승' :
+                        currentFeatures.upCount <= 1 ? '📉하락' : '➡️횡보';
+
+    // 예측 방향
+    let prediction = '🟡 중립';
+    let confidence = '낮음';
+
+    if (stats.count >= 5) {
+      if (stats.upProb10 >= 70) {
+        prediction = '🟢 상승 우세';
+        confidence = stats.upProb10 >= 80 ? '높음' : '중간';
+      } else if (stats.upProb10 <= 30) {
+        prediction = '🔴 하락 우세';
+        confidence = stats.upProb10 <= 20 ? '높음' : '중간';
+      }
+    }
+
+    // 응답 메시지 생성
+    let response = `📊 ${coinInput} 패턴 분석
+
+━━━━━━━━━━━━━━━━
+📍 현재 상황
+━━━━━━━━━━━━━━━━
+
+• 거래량: ${currentFeatures.volRatio.toFixed(1)}x ${volStatus}
+• 위치: ${currentFeatures.position.toFixed(0)}% ${posStatus}
+• 추세: ${currentFeatures.upCount}/5 양봉 ${trendStatus}
+• 변동성: ${currentFeatures.totalRange.toFixed(2)}%
+
+━━━━━━━━━━━━━━━━
+🔍 유사 패턴 분석 (${stats.count}건)
+━━━━━━━━━━━━━━━━
+`;
+
+    if (stats.count === 0) {
+      response += `\n유사한 패턴을 찾지 못했습니다.\n조건을 완화하여 다시 시도해주세요.`;
+    } else {
+      response += `
+📈 5봉(20시간) 후:
+├─ 상승 확률: ${stats.upProb5}%
+└─ 평균 변화: ${stats.avgChange5 > 0 ? '+' : ''}${stats.avgChange5}%
+
+📈 10봉(40시간) 후:
+├─ 상승 확률: ${stats.upProb10}%
+└─ 평균 변화: ${stats.avgChange10 > 0 ? '+' : ''}${stats.avgChange10}%
+
+📊 10봉 내 변동폭:
+├─ 평균 최대 상승: +${stats.avgMaxUp}%
+└─ 평균 최대 하락: ${stats.avgMaxDown}%
+
+━━━━━━━━━━━━━━━━
+🎯 예측: ${prediction}
+📊 신뢰도: ${confidence} (샘플 ${stats.count}건)
+━━━━━━━━━━━━━━━━`;
+
+      // 상위 3개 유사 패턴 표시
+      if (similarPatterns.length > 0) {
+        response += `\n\n📅 유사 패턴 TOP3:`;
+        for (let i = 0; i < Math.min(3, similarPatterns.length); i++) {
+          const p = similarPatterns[i];
+          response += `\n${i+1}. ${p.date} (${p.similarity.toFixed(0)}%) → ${p.after10Change > 0 ? '+' : ''}${p.after10Change?.toFixed(1) || '?'}%`;
+        }
+      }
+    }
+
+    response += `\n\n⚠️ 참고용 - 과거가 미래를 보장하지 않음`;
+
+    return response;
+
+  } catch (error) {
+    console.error('handlePatternCommand error:', error);
+    return `❌ 패턴 분석 중 오류가 발생했습니다: ${error.message}`;
+  }
+}
+
+// ============================================
+// 경제 캘린더 기능
+// ============================================
+
+// 암호화폐에 중요한 경제 지표 목록
+const CRYPTO_IMPORTANT_EVENTS = {
+  'Interest Rate Decision': {
+    emoji: '🏦',
+    importance: '최상',
+    goodForCrypto: '동결 또는 인하',
+    badForCrypto: '인상',
+    explanation: '금리 인상 → 달러 강세 → 암호화폐 하락\n금리 인하 → 유동성 증가 → 암호화폐 상승'
+  },
+  'CPI': {
+    emoji: '📊',
+    importance: '상',
+    goodForCrypto: '예상보다 낮음',
+    badForCrypto: '예상보다 높음',
+    explanation: 'CPI↑ → 인플레이션 우려 → 금리 인상 가능성 → 암호화폐 하락\nCPI↓ → 금리 동결/인하 기대 → 암호화폐 상승'
+  },
+  'Core CPI': {
+    emoji: '📊',
+    importance: '상',
+    goodForCrypto: '예상보다 낮음',
+    badForCrypto: '예상보다 높음',
+    explanation: '근원 물가(식품/에너지 제외)가 연준의 핵심 지표\n예상보다 낮으면 금리 인하 기대감 상승'
+  },
+  'Nonfarm Payrolls': {
+    emoji: '👷',
+    importance: '상',
+    goodForCrypto: '예상보다 낮음 (완화적)',
+    badForCrypto: '예상보다 높음 (긴축적)',
+    explanation: '고용↑ → 경기 과열 → 금리 인상 → 암호화폐 하락\n고용↓ → 경기 둔화 → 금리 인하 기대 → 암호화폐 상승'
+  },
+  'Unemployment Rate': {
+    emoji: '📉',
+    importance: '중',
+    goodForCrypto: '예상보다 높음 (완화적)',
+    badForCrypto: '예상보다 낮음',
+    explanation: '실업률↑ → 완화적 정책 기대 → 암호화폐 상승\n실업률↓ → 긴축 지속 → 암호화폐 하락'
+  },
+  'GDP': {
+    emoji: '🏭',
+    importance: '중',
+    goodForCrypto: '예상 수준 유지',
+    badForCrypto: '급격한 변동',
+    explanation: 'GDP 예상 부합 → 안정적 시장 → 암호화폐 중립\nGDP 급락 → 경기 침체 우려 → 리스크자산 회피'
+  },
+  'PCE': {
+    emoji: '🛒',
+    importance: '상',
+    goodForCrypto: '예상보다 낮음',
+    badForCrypto: '예상보다 높음',
+    explanation: '연준이 가장 중시하는 물가 지표\nPCE↓ → 금리 인하 기대 → 암호화폐 상승'
+  },
+  'Core PCE': {
+    emoji: '🛒',
+    importance: '최상',
+    goodForCrypto: '예상보다 낮음',
+    badForCrypto: '예상보다 높음',
+    explanation: '연준의 핵심 인플레이션 지표 (2% 목표)\n목표치 근접 → 금리 인하 가능성 → 암호화폐 상승'
+  },
+  'Initial Jobless Claims': {
+    emoji: '📝',
+    importance: '중',
+    goodForCrypto: '예상보다 높음',
+    badForCrypto: '예상보다 낮음',
+    explanation: '주간 실업수당 청구 건수\n청구↑ → 노동시장 냉각 → 완화적 → 암호화폐 상승'
+  },
+  'PPI': {
+    emoji: '🏭',
+    importance: '중',
+    goodForCrypto: '예상보다 낮음',
+    badForCrypto: '예상보다 높음',
+    explanation: '생산자물가 → CPI 선행지표\nPPI↓ → CPI↓ 기대 → 암호화폐 상승'
+  },
+  'Retail Sales': {
+    emoji: '🛍️',
+    importance: '중',
+    goodForCrypto: '예상 수준',
+    badForCrypto: '급격한 상승',
+    explanation: '소비 급증 → 인플레이션 우려 → 긴축 → 암호화폐 하락\n소비 둔화 → 경기 우려 → 완화적 → 암호화폐 상승'
+  },
+  'FOMC': {
+    emoji: '🎙️',
+    importance: '최상',
+    goodForCrypto: '비둘기파 발언',
+    badForCrypto: '매파적 발언',
+    explanation: '연준 회의/의사록/연설\n비둘기파(완화적) → 암호화폐 상승\n매파(긴축적) → 암호화폐 하락'
+  },
+  'Fed Chair Powell': {
+    emoji: '🎤',
+    importance: '최상',
+    goodForCrypto: '비둘기파 발언',
+    badForCrypto: '매파적 발언',
+    explanation: '파월 의장 발언은 시장에 큰 영향\n금리 인하 시사 → 암호화폐 급등 가능'
+  }
+};
+
+// Finnhub에서 경제 캘린더 가져오기
+async function getEconomicCalendar() {
+  try {
+    const today = new Date();
+    const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const fromDate = today.toISOString().split('T')[0];
+    const toDate = nextWeek.toISOString().split('T')[0];
+
+    const url = `https://finnhub.io/api/v1/calendar/economic?from=${fromDate}&to=${toDate}&token=${FINNHUB_API_KEY}`;
+
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' }
+    });
+
+    if (!response.ok) {
+      throw new Error(`API 오류: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.economicCalendar || [];
+
+  } catch (error) {
+    console.error('getEconomicCalendar error:', error);
+    return [];
+  }
+}
+
+// 암호화폐 관련 이벤트 필터링
+function filterCryptoRelevantEvents(events) {
+  const relevant = [];
+
+  for (const event of events) {
+    // 미국 이벤트만 (암호화폐에 가장 큰 영향)
+    if (event.country !== 'US') continue;
+
+    // 중요 이벤트 매칭
+    for (const [keyword, info] of Object.entries(CRYPTO_IMPORTANT_EVENTS)) {
+      if (event.event && event.event.includes(keyword)) {
+        relevant.push({
+          ...event,
+          cryptoInfo: info,
+          matchedKeyword: keyword
+        });
+        break;
+      }
+    }
+  }
+
+  // 날짜순 정렬
+  relevant.sort((a, b) => new Date(a.time) - new Date(b.time));
+
+  return relevant;
+}
+
+// 경제 캘린더 메시지 생성 (무료방용 - 간단)
+function formatEconomicCalendarFree(events) {
+  const now = new Date();
+  const kstOffset = 9 * 60 * 60 * 1000;
+
+  let msg = `📅 이번 주 경제 캘린더
+
+━━━━━━━━━━━━━━━━
+
+🇺🇸 암호화폐 영향 주요 일정
+
+`;
+
+  if (events.length === 0) {
+    msg += `이번 주 주요 이벤트 없음\n`;
+  } else {
+    // 오늘/내일/이번주로 그룹화
+    const today = now.toISOString().split('T')[0];
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    for (const event of events.slice(0, 8)) {
+      const eventDate = event.time ? event.time.split(' ')[0] : '';
+      const eventTime = event.time ? event.time.split(' ')[1]?.substring(0, 5) : '';
+
+      // KST 변환 (대략)
+      let kstTime = eventTime;
+      if (eventTime) {
+        const [h, m] = eventTime.split(':').map(Number);
+        const kstH = (h + 14) % 24; // EST → KST (+14시간)
+        kstTime = `${kstH.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+      }
+
+      let dateLabel = '';
+      if (eventDate === today) dateLabel = '오늘';
+      else if (eventDate === tomorrow) dateLabel = '내일';
+      else dateLabel = eventDate.substring(5); // MM-DD
+
+      const info = event.cryptoInfo;
+      const impEmoji = info.importance === '최상' ? '🔴' : info.importance === '상' ? '🟠' : '🟡';
+
+      msg += `${info.emoji} ${event.matchedKeyword}
+├─ ${impEmoji} ${dateLabel} ${kstTime} KST
+└─ 암호화폐: ${info.goodForCrypto} = 상승
+
+`;
+    }
+  }
+
+  msg += `━━━━━━━━━━━━━━━━
+
+💡 발표 시간에 변동성 주의!
+
+⚠️ 참고용 - 투자권유 아님
+
+📢 @V38_Signal`;
+
+  return msg;
+}
+
+// 경제 캘린더 메시지 생성 (프리미엄용 - 상세)
+function formatEconomicCalendarPremium(events) {
+  const now = new Date();
+
+  let msg = `📅 이번 주 경제 캘린더 (상세)
+
+━━━━━━━━━━━━━━━━
+
+🇺🇸 암호화폐 영향 주요 일정
+
+`;
+
+  if (events.length === 0) {
+    msg += `이번 주 주요 이벤트 없음\n`;
+  } else {
+    const today = now.toISOString().split('T')[0];
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    for (const event of events.slice(0, 10)) {
+      const eventDate = event.time ? event.time.split(' ')[0] : '';
+      const eventTime = event.time ? event.time.split(' ')[1]?.substring(0, 5) : '';
+
+      // KST 변환
+      let kstTime = eventTime;
+      if (eventTime) {
+        const [h, m] = eventTime.split(':').map(Number);
+        const kstH = (h + 14) % 24;
+        kstTime = `${kstH.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+      }
+
+      let dateLabel = '';
+      if (eventDate === today) dateLabel = '🔥오늘';
+      else if (eventDate === tomorrow) dateLabel = '📌내일';
+      else dateLabel = eventDate.substring(5);
+
+      const info = event.cryptoInfo;
+      const impEmoji = info.importance === '최상' ? '🔴🔴' : info.importance === '상' ? '🔴' : '🟡';
+
+      msg += `${info.emoji} ${event.matchedKeyword}
+├─ ${impEmoji} 중요도: ${info.importance}
+├─ 🕐 ${dateLabel} ${kstTime} KST
+├─ 📈 예상: ${event.estimate || '미정'}
+├─ 📊 이전: ${event.prev || '미정'}
+├─ ✅ 상승 조건: ${info.goodForCrypto}
+├─ ❌ 하락 조건: ${info.badForCrypto}
+└─ 💡 해석:
+   ${info.explanation.split('\n').join('\n   ')}
+
+`;
+    }
+  }
+
+  msg += `━━━━━━━━━━━━━━━━
+
+📊 발표 결과 해석법
+
+✅ 예상 < 실제 → 예상보다 강함
+❌ 예상 > 실제 → 예상보다 약함
+
+💡 CPI/PCE: 낮을수록 암호화폐 상승
+💡 고용: 약할수록 암호화폐 상승 (역설적)
+💡 FOMC: 비둘기파일수록 상승
+
+━━━━━━━━━━━━━━━━
+
+⚠️ 참고용 - 투자권유 아님`;
+
+  return msg;
+}
+
+// 경제 캘린더 발송 (무료방)
+async function sendEconomicCalendar() {
+  try {
+    const events = await getEconomicCalendar();
+    const relevantEvents = filterCryptoRelevantEvents(events);
+    const message = formatEconomicCalendarFree(relevantEvents);
+
+    await sendMessage(FREE_CHANNEL_ID, message);
+    await sendMessage(ADMIN_ID, `✅ 경제 캘린더 발송 완료 (${relevantEvents.length}건)`);
+
+    return { success: true, count: relevantEvents.length };
+  } catch (error) {
+    console.error('sendEconomicCalendar error:', error);
+    await sendMessage(ADMIN_ID, `❌ 경제 캘린더 발송 실패: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
+// 경제 캘린더 발송 (프리미엄방)
+async function sendEconomicCalendarPremium() {
+  try {
+    const events = await getEconomicCalendar();
+    const relevantEvents = filterCryptoRelevantEvents(events);
+    const message = formatEconomicCalendarPremium(relevantEvents);
+
+    // 프리미엄 그룹 2개에 발송
+    await sendMessage(PREMIUM_GROUP_ID, message);
+    await sendMessage(PREMIUM_GROUP_ID_2, message);
+    await sendMessage(ADMIN_ID, `✅ 프리미엄 경제 캘린더 발송 완료 (${relevantEvents.length}건)`);
+
+    return { success: true, count: relevantEvents.length };
+  } catch (error) {
+    console.error('sendEconomicCalendarPremium error:', error);
+    await sendMessage(ADMIN_ID, `❌ 프리미엄 경제 캘린더 발송 실패: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
+// /경제 명령어 응답 생성
+async function handleEconomicCommand() {
+  try {
+    const events = await getEconomicCalendar();
+    const relevantEvents = filterCryptoRelevantEvents(events);
+    return formatEconomicCalendarPremium(relevantEvents);
+  } catch (error) {
+    return `❌ 경제 캘린더 조회 실패: ${error.message}`;
+  }
+}
+
+// ============================================
+// 월간/주간 경제 캘린더 (프리미엄 전용)
+// ============================================
+
+// 한 달치 경제 캘린더 가져오기
+async function getMonthlyEconomicCalendar() {
+  try {
+    const today = new Date();
+    const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, today.getDate());
+
+    const fromDate = today.toISOString().split('T')[0];
+    const toDate = nextMonth.toISOString().split('T')[0];
+
+    const url = `https://finnhub.io/api/v1/calendar/economic?from=${fromDate}&to=${toDate}&token=${FINNHUB_API_KEY}`;
+
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' }
+    });
+
+    if (!response.ok) {
+      throw new Error(`API 오류: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.economicCalendar || [];
+
+  } catch (error) {
+    console.error('getMonthlyEconomicCalendar error:', error);
+    return [];
+  }
+}
+
+// 월간 경제 캘린더 메시지 생성
+function formatMonthlyCalendar(events) {
+  const now = new Date();
+  const monthNames = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
+  const currentMonth = monthNames[now.getMonth()];
+
+  let msg = `📅 ${currentMonth} 경제 캘린더 (월간)
+
+━━━━━━━━━━━━━━━━
+
+🇺🇸 이번 달 주요 일정
+
+`;
+
+  if (events.length === 0) {
+    msg += `이번 달 주요 이벤트 없음\n`;
+  } else {
+    // 주차별로 그룹화
+    const weekGroups = {};
+
+    for (const event of events) {
+      const eventDate = new Date(event.time);
+      const weekNum = Math.ceil(eventDate.getDate() / 7);
+      const weekKey = `${weekNum}주차`;
+
+      if (!weekGroups[weekKey]) {
+        weekGroups[weekKey] = [];
+      }
+      weekGroups[weekKey].push(event);
+    }
+
+    for (const [week, weekEvents] of Object.entries(weekGroups)) {
+      msg += `📌 ${week}\n`;
+
+      for (const event of weekEvents.slice(0, 5)) {
+        const eventDate = event.time ? event.time.split(' ')[0] : '';
+        const day = eventDate ? eventDate.substring(8, 10) : '';
+        const info = event.cryptoInfo;
+        const impEmoji = info.importance === '최상' ? '🔴' : info.importance === '상' ? '🟠' : '🟡';
+
+        msg += `  ${impEmoji} ${day}일 ${info.emoji} ${event.matchedKeyword}\n`;
+      }
+      msg += `\n`;
+    }
+  }
+
+  msg += `━━━━━━━━━━━━━━━━
+
+🔴 최상 = FOMC, Core PCE, 파월 연설
+🟠 상 = CPI, NFP, PCE
+🟡 중 = GDP, 실업률, PPI
+
+━━━━━━━━━━━━━━━━
+
+💡 중요 일정 전후 변동성 주의!
+📊 매주 월요일 상세 일정 발송
+
+⚠️ 참고용 - 투자권유 아님`;
+
+  return msg;
+}
+
+// 주간 경제 캘린더 메시지 생성 (더 상세)
+function formatWeeklyCalendarPremium(events) {
+  const now = new Date();
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - now.getDay() + 1); // 월요일
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6); // 일요일
+
+  const startStr = `${weekStart.getMonth() + 1}/${weekStart.getDate()}`;
+  const endStr = `${weekEnd.getMonth() + 1}/${weekEnd.getDate()}`;
+
+  let msg = `📅 이번 주 경제 캘린더 (${startStr}~${endStr})
+
+━━━━━━━━━━━━━━━━
+
+🇺🇸 암호화폐 영향 주요 일정
+
+`;
+
+  if (events.length === 0) {
+    msg += `이번 주 주요 이벤트 없음\n`;
+  } else {
+    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+
+    for (const event of events.slice(0, 12)) {
+      const eventDate = event.time ? new Date(event.time) : null;
+      const dayName = eventDate ? dayNames[eventDate.getDay()] : '';
+      const dateStr = event.time ? event.time.split(' ')[0].substring(5) : '';
+      const timeStr = event.time ? event.time.split(' ')[1]?.substring(0, 5) : '';
+
+      // KST 변환
+      let kstTime = timeStr;
+      if (timeStr) {
+        const [h, m] = timeStr.split(':').map(Number);
+        const kstH = (h + 14) % 24;
+        kstTime = `${kstH.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+      }
+
+      const info = event.cryptoInfo;
+      const impEmoji = info.importance === '최상' ? '🔴🔴' : info.importance === '상' ? '🔴' : '🟡';
+
+      msg += `${info.emoji} ${event.matchedKeyword}
+├─ ${impEmoji} 중요도: ${info.importance}
+├─ 📆 ${dateStr} (${dayName}) ${kstTime} KST
+├─ 📈 예상: ${event.estimate || '미정'} | 이전: ${event.prev || '미정'}
+├─ ✅ 상승: ${info.goodForCrypto}
+├─ ❌ 하락: ${info.badForCrypto}
+└─ 💡 ${info.explanation.split('\n')[0]}
+
+`;
+    }
+  }
+
+  msg += `━━━━━━━━━━━━━━━━
+
+📊 이번 주 핵심 포인트
+
+`;
+
+  // 최상 중요도 이벤트 강조
+  const topEvents = events.filter(e => e.cryptoInfo.importance === '최상');
+  if (topEvents.length > 0) {
+    msg += `⚠️ 최고 중요 이벤트 ${topEvents.length}건!\n`;
+    for (const e of topEvents.slice(0, 3)) {
+      msg += `   • ${e.matchedKeyword}\n`;
+    }
+  } else {
+    msg += `✅ 최고 중요 이벤트 없음 (상대적 안정)\n`;
+  }
+
+  msg += `
+━━━━━━━━━━━━━━━━
+
+💡 발표 30분 전후 포지션 주의
+📉 예상치 벗어나면 급변동 가능
+
+⚠️ 참고용 - 투자권유 아님`;
+
+  return msg;
+}
+
+// 월간 경제 캘린더 발송 (매월 1일)
+async function sendMonthlyEconomicCalendar() {
+  try {
+    const events = await getMonthlyEconomicCalendar();
+    const relevantEvents = filterCryptoRelevantEvents(events);
+    const message = formatMonthlyCalendar(relevantEvents);
+
+    // 프리미엄 그룹에 발송
+    await sendMessage(PREMIUM_GROUP_ID, message);
+    await sendMessage(PREMIUM_GROUP_ID_2, message);
+    await sendMessage(ADMIN_ID, `✅ 월간 경제 캘린더 발송 완료 (${relevantEvents.length}건)`);
+
+    return { success: true, count: relevantEvents.length };
+  } catch (error) {
+    console.error('sendMonthlyEconomicCalendar error:', error);
+    await sendMessage(ADMIN_ID, `❌ 월간 경제 캘린더 실패: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
+// 주간 경제 캘린더 발송 (매주 월요일)
+async function sendWeeklyEconomicCalendar() {
+  try {
+    const events = await getEconomicCalendar(); // 1주일치
+    const relevantEvents = filterCryptoRelevantEvents(events);
+    const message = formatWeeklyCalendarPremium(relevantEvents);
+
+    // 프리미엄 그룹에 발송
+    await sendMessage(PREMIUM_GROUP_ID, message);
+    await sendMessage(PREMIUM_GROUP_ID_2, message);
+    await sendMessage(ADMIN_ID, `✅ 주간 경제 캘린더 발송 완료 (${relevantEvents.length}건)`);
+
+    return { success: true, count: relevantEvents.length };
+  } catch (error) {
+    console.error('sendWeeklyEconomicCalendar error:', error);
+    await sendMessage(ADMIN_ID, `❌ 주간 경제 캘린더 실패: ${error.message}`);
+    return { success: false, error: error.message };
+  }
 }

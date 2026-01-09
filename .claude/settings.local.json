@@ -9,7 +9,8 @@
       "Bash(\"https://script.google.com/macros/s/AKfycbxNZUjF4mSL7VioSAE3ZVfnP1m1BXbDwY5qmjSgZfKO91GiOJWKnFrNR0Dsq0iOTv69/exec\")",
       "Bash(\"https://script.google.com/macros/s/AKfycbwKxvNYuMuZRXai7sIWOiyJKgxg7R3J45G3fWhJfJD7tBbWvsydreETG1m6lBePpbQ5/exec\")",
       "Bash(git reset:*)",
-      "Bash(npx wrangler deploy)"
+      "Bash(npx wrangler deploy)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []
