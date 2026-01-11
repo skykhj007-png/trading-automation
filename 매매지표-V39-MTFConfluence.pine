@@ -99,6 +99,22 @@ senkouBPeriod = input.int(120, title="선행스팬B 기간", minval=1, maxval=20
 displacement = input.int(30, title="구름 이동", minval=1, maxval=100, group="일목균형표", tooltip="암호화폐 24/7 시장: 30 (기존 26)")
 
 // ============================================
+// 엘리엇 파동 (Elliott Wave) 설정
+// ============================================
+showElliottWave = input.bool(true, title="엘리엇 파동 활성화", group="엘리엇 파동")
+showEWLabels = input.bool(true, title="파동 레이블 표시", group="엘리엇 파동")
+showEWFib = input.bool(true, title="피보나치 레벨 표시", group="엘리엇 파동")
+showEWZones = input.bool(true, title="매매 구간 표시", group="엘리엇 파동", tooltip="Wave 2 골든존 (61.8~78.6%) 표시")
+ewSwingLength = input.int(10, title="스윙 탐색 길이", minval=5, maxval=50, group="엘리엇 파동")
+ewMinWaves = input.int(5, title="최소 파동 수", minval=3, maxval=10, group="엘리엇 파동")
+ewFibTolerance = input.float(5.0, title="피보나치 허용 오차 (%)", minval=1.0, maxval=20.0, step=1.0, group="엘리엇 파동")
+
+// 엘리엇 파동 색상
+ewImpulseColor = input.color(color.new(color.blue, 0), title="Impulse 색상", group="엘리엇 파동")
+ewCorrectiveColor = input.color(color.new(color.orange, 0), title="Corrective 색상", group="엘리엇 파동")
+ewGoldenZoneColor = input.color(color.new(color.green, 80), title="골든존 색상", group="엘리엇 파동")
+
+// ============================================
 // 현재 TF 기본 지표
 // ============================================
 
@@ -1790,5 +1806,298 @@ if showVolumeDelta and deltaBullDiv and nearSupport3d
     string d5 = "📍 지지선 근처 - 매수 고려"
     string d6 = disclaimer
     alert(d1 + "\n" + d2 + "\n" + d3 + "\n" + d4 + "\n" + d5 + "\n" + d6, freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// 엘리엇 파동 분석 (Elliott Wave Analysis)
+// ============================================
+
+// 스윙 고점/저점 감지
+ewSwingHigh = ta.pivothigh(high, ewSwingLength, ewSwingLength)
+ewSwingLow = ta.pivotlow(low, ewSwingLength, ewSwingLength)
+
+// 스윙 포인트 저장 배열
+var float[] ewHighs = array.new_float(10, na)
+var float[] ewLows = array.new_float(10, na)
+var int[] ewHighBars = array.new_int(10, na)
+var int[] ewLowBars = array.new_int(10, na)
+
+// 스윙 포인트 업데이트
+if showElliottWave and not na(ewSwingHigh)
+    array.unshift(ewHighs, ewSwingHigh)
+    array.unshift(ewHighBars, bar_index - ewSwingLength)
+    if array.size(ewHighs) > 10
+        array.pop(ewHighs)
+        array.pop(ewHighBars)
+
+if showElliottWave and not na(ewSwingLow)
+    array.unshift(ewLows, ewSwingLow)
+    array.unshift(ewLowBars, bar_index - ewSwingLength)
+    if array.size(ewLows) > 10
+        array.pop(ewLows)
+        array.pop(ewLowBars)
+
+// 피보나치 비율 계산 함수
+ewFibRatio(float start, float end, float current) =>
+    math.abs((current - start) / (end - start) * 100)
+
+// 피보나치 레벨 체크 (허용 오차 포함)
+ewCheckFib(float ratio, float target) =>
+    math.abs(ratio - target) <= ewFibTolerance
+
+// 파동 구조 분석
+var string ewCurrentPattern = "분석중"
+var string ewCurrentWave = "-"
+var float ewWave0 = na  // 시작점
+var float ewWave1 = na
+var float ewWave2 = na
+var float ewWave3 = na
+var float ewWave4 = na
+var float ewWave5 = na
+var int ewWave0Bar = na
+var int ewWave1Bar = na
+var int ewWave2Bar = na
+var int ewWave3Bar = na
+var int ewWave4Bar = na
+var int ewWave5Bar = na
+var bool ewIsUptrend = true
+
+// 최근 스윙 포인트로 파동 분석
+if showElliottWave and array.size(ewHighs) >= 3 and array.size(ewLows) >= 3
+    // 최근 고점/저점 가져오기
+    float h1 = array.get(ewHighs, 0)
+    float h2 = array.get(ewHighs, 1)
+    float h3 = array.get(ewHighs, 2)
+    float l1 = array.get(ewLows, 0)
+    float l2 = array.get(ewLows, 1)
+    float l3 = array.get(ewLows, 2)
+
+    int hb1 = array.get(ewHighBars, 0)
+    int hb2 = array.get(ewHighBars, 1)
+    int lb1 = array.get(ewLowBars, 0)
+    int lb2 = array.get(ewLowBars, 1)
+
+    // 상승 Impulse 패턴 감지 (HH + HL 구조)
+    bool isHigherHigh = not na(h1) and not na(h2) and h1 > h2
+    bool isHigherLow = not na(l1) and not na(l2) and l1 > l2
+
+    // 하락 Impulse 패턴 감지 (LH + LL 구조)
+    bool isLowerHigh = not na(h1) and not na(h2) and h1 < h2
+    bool isLowerLow = not na(l1) and not na(l2) and l1 < l2
+
+    // 상승 추세 Impulse
+    if isHigherHigh and isHigherLow
+        ewIsUptrend := true
+        ewWave0 := l2
+        ewWave1 := h2
+        ewWave2 := l1
+        ewWave3 := h1
+        ewWave0Bar := lb2
+        ewWave1Bar := hb2
+        ewWave2Bar := lb1
+        ewWave3Bar := hb1
+
+        // 피보나치 비율 검증
+        float wave1Size = ewWave1 - ewWave0
+        float wave2Retrace = ewFibRatio(ewWave0, ewWave1, ewWave2)
+        float wave3Extend = (ewWave3 - ewWave2) / wave1Size * 100
+
+        // Wave 2: 50~78.6% 되돌림 (가장 일반적)
+        bool validWave2 = wave2Retrace >= 38.2 and wave2Retrace <= 88.7
+
+        // Wave 3: 161.8% 이상 확장 (가장 강한 파동)
+        bool validWave3 = wave3Extend >= 100
+
+        if validWave2 and validWave3
+            ewCurrentPattern := "IMPULSE ↑"
+            if close > ewWave3
+                ewCurrentWave := "Wave 5 진행중"
+            else if close > ewWave2
+                ewCurrentWave := "Wave 3 진행중"
+            else
+                ewCurrentWave := "Wave 2 (매수 구간)"
+        else if validWave2
+            ewCurrentPattern := "ABC 조정 가능"
+            ewCurrentWave := "Wave C 진행중"
+
+    // 하락 추세 Impulse
+    else if isLowerHigh and isLowerLow
+        ewIsUptrend := false
+        ewWave0 := h2
+        ewWave1 := l2
+        ewWave2 := h1
+        ewWave3 := l1
+        ewWave0Bar := hb2
+        ewWave1Bar := lb2
+        ewWave2Bar := hb1
+        ewWave3Bar := lb1
+
+        float wave1Size = ewWave0 - ewWave1
+        float wave2Retrace = ewFibRatio(ewWave0, ewWave1, ewWave2)
+        float wave3Extend = (ewWave2 - ewWave3) / wave1Size * 100
+
+        bool validWave2 = wave2Retrace >= 38.2 and wave2Retrace <= 88.7
+        bool validWave3 = wave3Extend >= 100
+
+        if validWave2 and validWave3
+            ewCurrentPattern := "IMPULSE ↓"
+            if close < ewWave3
+                ewCurrentWave := "Wave 5 진행중"
+            else if close < ewWave2
+                ewCurrentWave := "Wave 3 진행중"
+            else
+                ewCurrentWave := "Wave 2 (매도 구간)"
+        else if validWave2
+            ewCurrentPattern := "ABC 조정 가능"
+            ewCurrentWave := "Wave C 진행중"
+
+    // 횡보/삼각형 패턴 감지
+    else if not isHigherHigh and not isLowerLow
+        float range1 = math.abs(h1 - l1)
+        float range2 = math.abs(h2 - l2)
+
+        // 수렴 삼각형: 범위가 줄어듦
+        if range1 < range2
+            ewCurrentPattern := "TRIANGLE"
+            ewCurrentWave := "수렴 중 (브레이크아웃 대기)"
+        else
+            ewCurrentPattern := "FLAT/ZIGZAG"
+            ewCurrentWave := "조정파 진행중"
+
+// Wave 3 매매 신호 (골든존)
+var bool ewWave3BuyZone = false
+var bool ewWave3SellZone = false
+var float ewGoldenTop = na
+var float ewGoldenBottom = na
+
+if showElliottWave and not na(ewWave0) and not na(ewWave1)
+    float wave1Range = math.abs(ewWave1 - ewWave0)
+
+    if ewIsUptrend
+        // 상승 추세: Wave 2 골든존 (61.8~78.6%)
+        ewGoldenTop := ewWave1 - wave1Range * 0.618
+        ewGoldenBottom := ewWave1 - wave1Range * 0.786
+        ewWave3BuyZone := close >= ewGoldenBottom and close <= ewGoldenTop and close < ewWave1
+        ewWave3SellZone := false
+    else
+        // 하락 추세: Wave 2 골든존 (61.8~78.6%)
+        ewGoldenBottom := ewWave1 + wave1Range * 0.618
+        ewGoldenTop := ewWave1 + wave1Range * 0.786
+        ewWave3SellZone := close >= ewGoldenBottom and close <= ewGoldenTop and close > ewWave1
+        ewWave3BuyZone := false
+
+// 엘리엇 파동 시각화
+var label ewLabel1 = na
+var label ewLabel2 = na
+var label ewLabel3 = na
+var line ewFibLine1 = na
+var line ewFibLine2 = na
+var line ewFibLine3 = na
+var box ewGoldenBox = na
+
+// 이전 객체 삭제
+if showElliottWave and showEWLabels
+    label.delete(ewLabel1[1])
+    label.delete(ewLabel2[1])
+    label.delete(ewLabel3[1])
+
+if showElliottWave and showEWFib
+    line.delete(ewFibLine1[1])
+    line.delete(ewFibLine2[1])
+    line.delete(ewFibLine3[1])
+
+if showElliottWave and showEWZones
+    box.delete(ewGoldenBox[1])
+
+// 파동 레이블 그리기
+if showElliottWave and showEWLabels and not na(ewWave1Bar) and not na(ewWave2Bar)
+    labelColor = ewIsUptrend ? ewImpulseColor : ewCorrectiveColor
+
+    if not na(ewWave0) and not na(ewWave0Bar)
+        ewLabel1 := label.new(ewWave0Bar, ewIsUptrend ? ewWave0 : ewWave0,
+             ewIsUptrend ? "0" : "0",
+             style=ewIsUptrend ? label.style_label_up : label.style_label_down,
+             color=labelColor, textcolor=color.white, size=size.small)
+
+    if not na(ewWave1) and not na(ewWave1Bar)
+        ewLabel2 := label.new(ewWave1Bar, ewIsUptrend ? ewWave1 : ewWave1,
+             "1",
+             style=ewIsUptrend ? label.style_label_down : label.style_label_up,
+             color=labelColor, textcolor=color.white, size=size.small)
+
+    if not na(ewWave2) and not na(ewWave2Bar)
+        ewLabel3 := label.new(ewWave2Bar, ewIsUptrend ? ewWave2 : ewWave2,
+             "2",
+             style=ewIsUptrend ? label.style_label_up : label.style_label_down,
+             color=labelColor, textcolor=color.white, size=size.small)
+
+// 피보나치 레벨 그리기
+if showElliottWave and showEWFib and not na(ewWave0) and not na(ewWave1)
+    float wave1Range = math.abs(ewWave1 - ewWave0)
+    float fib382 = ewIsUptrend ? ewWave1 - wave1Range * 0.382 : ewWave1 + wave1Range * 0.382
+    float fib50 = ewIsUptrend ? ewWave1 - wave1Range * 0.5 : ewWave1 + wave1Range * 0.5
+    float fib618 = ewIsUptrend ? ewWave1 - wave1Range * 0.618 : ewWave1 + wave1Range * 0.618
+
+    ewFibLine1 := line.new(ewWave1Bar, fib382, bar_index, fib382, color=color.gray, style=line.style_dotted, width=1)
+    ewFibLine2 := line.new(ewWave1Bar, fib50, bar_index, fib50, color=color.yellow, style=line.style_dotted, width=1)
+    ewFibLine3 := line.new(ewWave1Bar, fib618, bar_index, fib618, color=color.green, style=line.style_dotted, width=2)
+
+// 골든존 박스 그리기
+if showElliottWave and showEWZones and not na(ewGoldenTop) and not na(ewGoldenBottom)
+    ewGoldenBox := box.new(bar_index - 50, ewGoldenTop, bar_index + 10, ewGoldenBottom,
+         bgcolor=ewGoldenZoneColor, border_color=color.green, border_width=1)
+
+// 엘리엇 파동 테이블 (미니 패널에 통합)
+var table ewTable = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 85), border_width=1)
+
+if showElliottWave and barstate.islast
+    table.cell(ewTable, 0, 0, "📊 Elliott Wave", text_color=color.white, text_size=size.small)
+    table.cell(ewTable, 1, 0, "", text_color=color.white, text_size=size.small)
+    table.cell(ewTable, 0, 1, "패턴", text_color=color.gray, text_size=size.tiny)
+    table.cell(ewTable, 1, 1, ewCurrentPattern, text_color=ewIsUptrend ? color.lime : color.red, text_size=size.tiny)
+    table.cell(ewTable, 0, 2, "현재", text_color=color.gray, text_size=size.tiny)
+    table.cell(ewTable, 1, 2, ewCurrentWave, text_color=color.yellow, text_size=size.tiny)
+    table.cell(ewTable, 0, 3, "신호", text_color=color.gray, text_size=size.tiny)
+    string ewSignal = ewWave3BuyZone ? "🟢 매수 골든존" : ewWave3SellZone ? "🔴 매도 골든존" : "⚪ 대기"
+    table.cell(ewTable, 1, 3, ewSignal, text_color=ewWave3BuyZone ? color.lime : ewWave3SellZone ? color.red : color.gray, text_size=size.tiny)
+
+// ============================================
+// 엘리엇 파동 알림
+// ============================================
+
+// Wave 3 매수 기회 알림
+if showElliottWave and ewWave3BuyZone and ewCurrentPattern == "IMPULSE ↑"
+    string ew1 = "🌊 ELLIOTT WAVE 매수 신호! 🌊"
+    string ew2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string ew3 = "━━━━━━━━━━━━━━"
+    string ew4 = "📈 패턴: " + ewCurrentPattern
+    string ew5 = "🎯 Wave 2 골든존 (61.8~78.6%)"
+    string ew6 = "💰 Wave 3 진입 기회!"
+    string ew7 = "🛡️ 손절: Wave 1 시작점 ($" + str.tostring(ewWave0, "#.##") + ")"
+    string ew8 = "🎯 목표: 161.8~261.8% 확장"
+    string ew9 = disclaimer
+    alert(ew1 + "\n" + ew2 + "\n" + ew3 + "\n" + ew4 + "\n" + ew5 + "\n" + ew6 + "\n" + ew7 + "\n" + ew8 + "\n" + ew9, freq=alert.freq_once_per_bar_close)
+
+// Wave 3 매도 기회 알림 (선물)
+if showElliottWave and ewWave3SellZone and ewCurrentPattern == "IMPULSE ↓" and isFutures
+    string ew1 = "🌊 ELLIOTT WAVE 매도 신호! 🌊"
+    string ew2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string ew3 = "━━━━━━━━━━━━━━"
+    string ew4 = "📉 패턴: " + ewCurrentPattern
+    string ew5 = "🎯 Wave 2 골든존 (61.8~78.6%)"
+    string ew6 = "💰 Wave 3 숏 진입 기회!"
+    string ew7 = "🛡️ 손절: Wave 1 시작점 ($" + str.tostring(ewWave0, "#.##") + ")"
+    string ew8 = "🎯 목표: 161.8~261.8% 확장"
+    string ew9 = disclaimer
+    alert(ew1 + "\n" + ew2 + "\n" + ew3 + "\n" + ew4 + "\n" + ew5 + "\n" + ew6 + "\n" + ew7 + "\n" + ew8 + "\n" + ew9, freq=alert.freq_once_per_bar_close)
+
+// 삼각형 브레이크아웃 대기 알림
+if showElliottWave and ewCurrentPattern == "TRIANGLE"
+    string ew1 = "🔺 TRIANGLE 패턴 감지!"
+    string ew2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string ew3 = "━━━━━━━━━━━━━━"
+    string ew4 = "📊 수렴 삼각형 - 브레이크아웃 대기"
+    string ew5 = "⚡ 변동성 확대 예상"
+    string ew6 = disclaimer
+    alert(ew1 + "\n" + ew2 + "\n" + ew3 + "\n" + ew4 + "\n" + ew5 + "\n" + ew6, freq=alert.freq_once_per_bar_close)
 
 

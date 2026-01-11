@@ -1237,6 +1237,22 @@ TPpgMe6JxtudoEdDegkyKUaBUyAWRKti12
 
 ━━━━━━━━━━━━━━━━
 
+🌊 엘리엇 파동 🆕
+
+/파동 - 엘리엇 파동 가이드
+/골든존 - Wave 3 매매법
+
+📈 차트에서 자동 감지:
+• IMPULSE (5파동 충격파)
+• ABC/ZIGZAG (조정파)
+• TRIANGLE (삼각형 수렴)
+
+🎯 골든존 (61.8~78.6%):
+• Wave 3 최적 진입 구간
+• 손절: Wave 1 시작점
+
+━━━━━━━━━━━━━━━━
+
 📢 무료 시그널: @V38_Signal
 
 💬 문의: @pointting`;
@@ -1276,6 +1292,122 @@ TPpgMe6JxtudoEdDegkyKUaBUyAWRKti12
     } else {
       responseText = `❌ 사용법: /broadcast [메시지]`;
     }
+  }
+
+  // /파동 - 엘리엇 파동 가이드
+  else if (command === '/파동' || command === '/wave' || command === '/elliott') {
+    responseText = `🌊 엘리엇 파동 가이드
+
+━━━━━━━━━━━━━━━━
+
+📚 기본 구조
+
+• 충격파 (Impulse): 5파동 (1-2-3-4-5)
+• 조정파 (Corrective): 3파동 (A-B-C)
+
+━━━━━━━━━━━━━━━━
+
+📈 충격파 규칙 (절대 규칙)
+
+1️⃣ Wave 2는 Wave 1 시작점 아래로 X
+2️⃣ Wave 3은 가장 짧은 파동 X
+3️⃣ Wave 4는 Wave 1 영역 침범 X
+
+━━━━━━━━━━━━━━━━
+
+🎯 파동별 피보나치 비율
+
+Wave 2 되돌림:
+• 38.2% (드묾)
+• 50~61.8% (73% 확률) ⭐
+• 78.6% (깊은 되돌림)
+
+Wave 3 확장:
+• 161.8% (가장 흔함) ⭐
+• 175~261.8% (강한 추세)
+• 361.8% (극단적)
+
+Wave 4 되돌림:
+• 23.6~38.2% (일반적) ⭐
+• 50% (최대)
+
+Wave 5 확장:
+• Wave 1과 동일 (100%)
+• 123.6~161.8% (연장)
+
+━━━━━━━━━━━━━━━━
+
+📊 패턴 종류
+
+IMPULSE ↑↓: 5파동 충격파
+ABC/ZIGZAG: 5-3-5 조정
+FLAT: 3-3-5 횡보 조정
+TRIANGLE: 3-3-3-3-3 수렴
+
+━━━━━━━━━━━━━━━━
+
+💡 /골든존 - Wave 3 매매법 보기`;
+  }
+
+  // /골든존 - Wave 3 매매법
+  else if (command === '/골든존' || command === '/goldenzone' || command === '/wave3') {
+    responseText = `🎯 골든존 매매법 (Wave 3)
+
+━━━━━━━━━━━━━━━━
+
+🌊 Wave 3 = 가장 수익성 높은 파동!
+
+• 가장 길고 강한 파동
+• 거래량 급증 동반
+• 갭 상승/하락 빈번
+
+━━━━━━━━━━━━━━━━
+
+📈 매수 전략 (상승 Impulse)
+
+1️⃣ Wave 1 완성 확인 (첫 상승파)
+2️⃣ Wave 2 되돌림 대기
+3️⃣ 골든존 진입!
+
+🟢 진입 구간:
+• 50% 되돌림: 1차 분할 매수
+• 61.8%: 2차 매수 (핵심) ⭐
+• 78.6%: 마지막 기회
+
+🛡️ 손절:
+• Wave 1 시작점 (0%) 아래
+• 78.6% 이탈 시 파동 무효
+
+🎯 목표가:
+• 1차: 100% (Wave 1 고점)
+• 2차: 161.8% ⭐
+• 3차: 261.8% (대세 상승)
+
+━━━━━━━━━━━━━━━━
+
+📉 숏 전략 (하락 Impulse)
+
+• 위와 동일하게 반대로 적용
+• 선물 모드에서만 활용
+
+━━━━━━━━━━━━━━━━
+
+💰 리스크/리워드 예시
+
+진입: 61.8% 되돌림
+손절: 0% (Wave 1 시작)
+목표: 161.8%
+
+RR비율 = 약 1:2.6 ⭐
+
+━━━━━━━━━━━━━━━━
+
+⚡ V39 지표에서 자동 감지!
+
+• 골든존 박스 (초록색)
+• 파동 레이블 (0, 1, 2)
+• 피보나치 라인 (점선)
+• 🌊 알림 자동 발송`;
   }
 
   if (responseText) {
@@ -1789,16 +1921,17 @@ ${alertText}
       await sendMessage(FREE_CHANNEL_ID, freeChannelMsg);
     }
 
-    // 프리미엄 시그널은 프리미엄 그룹에 오더북 정보와 함께 발송
-    if (isPremiumSignal && (isBuy || isSell)) {
-      const premiumMsg = `${alertText}${orderbookInfo}
-
-━━━━━━━━━━━━━━━━
-🔒 프리미엄 전용`;
-
-      await sendMessage(PREMIUM_GROUP_ID, premiumMsg);
-      await sendMessage(PREMIUM_GROUP_ID_2, premiumMsg);
-    }
+    // 프리미엄 시그널 발송 비활성화 (트레이딩뷰 코드 판매로 사용자가 직접 알람 설정)
+    // 프리미엄 방에는 경제 캘린더만 발송됨
+    // if (isPremiumSignal && (isBuy || isSell)) {
+    //   const premiumMsg = `${alertText}${orderbookInfo}
+    //
+    // ━━━━━━━━━━━━━━━━
+    // 🔒 프리미엄 전용`;
+    //
+    //   await sendMessage(PREMIUM_GROUP_ID, premiumMsg);
+    //   await sendMessage(PREMIUM_GROUP_ID_2, premiumMsg);
+    // }
 
     return { success: true };
   } catch (error) {
