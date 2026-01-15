@@ -11,8 +11,9 @@
 //
 // ============================================
 
-// 텔레그램 봇 토큰 (하드코딩)
-const BOT_TOKEN = "8581875115:AAFVCZKj6YNd6BAhoSl1jzh0WsIEKUF1Nbo";
+// 텔레그램 봇 토큰 (Cloudflare 환경변수에서 가져옴)
+// Settings → Variables → BOT_TOKEN 에 설정하세요
+let BOT_TOKEN;
 const OPENAI_API_KEY = "YOUR_OPENAI_API_KEY"; // Settings → Variables에서 설정
 const FINNHUB_API_KEY = "ctaborhr01qhup62c7tgctaborhr01qhup62c7u0"; // Finnhub 무료 API 키 (https://finnhub.io)
 
@@ -26,6 +27,9 @@ export default {
   // HTTP 요청 처리 (텔레그램 웹훅)
   // ============================================
   async fetch(request, env, ctx) {
+    // 환경변수에서 봇 토큰 로드
+    BOT_TOKEN = env.BOT_TOKEN;
+
     const url = new URL(request.url);
 
     // 웹훅 설정 엔드포인트
@@ -104,6 +108,9 @@ export default {
   // 스케줄 트리거 (cron별 분기 처리)
   // ============================================
   async scheduled(event, env, ctx) {
+    // 환경변수에서 봇 토큰 로드
+    BOT_TOKEN = env.BOT_TOKEN;
+
     const cron = event.cron;
 
     // 매월 1일 (월간 경제 캘린더)
