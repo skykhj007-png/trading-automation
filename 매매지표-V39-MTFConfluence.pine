@@ -306,6 +306,70 @@ string deltaGrade = strongPositiveDelta and delta3ConsecutiveBuy ? "STRONG BUY" 
 
 color deltaColor = deltaGrade == "STRONG BUY" ? color.lime : deltaGrade == "BUY" ? color.green : deltaGrade == "STRONG SELL" ? color.fuchsia : deltaGrade == "SELL" ? color.red : color.gray
 
+// ============================================
+// 스마트 OBV (Smart OBV) - 잭 웨이드 전략 (개선)
+// ============================================
+
+// 스마트 OBV 설정
+showSmartOBV = input.bool(true, title="스마트 OBV 활성화", group="스마트 OBV")
+smartOBVLength = input.int(20, title="중심선 길이", minval=5, maxval=50, group="스마트 OBV")
+smartOBVSqueezeMult = input.float(1.5, title="스퀴즈 BB 배수", minval=1.0, maxval=3.0, step=0.1, group="스마트 OBV", tooltip="BB 폭이 이 배수 이하면 스퀴즈")
+showSmartOBVBg = input.bool(true, title="배경색 표시", group="스마트 OBV")
+
+// 스마트 OBV 계산 (가격 변동 강도 가중치 적용)
+// 기존 OBV: 양봉이면 +volume, 음봉이면 -volume (단순)
+// 스마트 OBV: (현재종가 - 이전종가) / ATR * volume (ATR 표준화 가중치)
+float priceChangePrev = close - close[1]  // 이전 종가 대비 변동
+float atrNorm = ta.atr(14)  // ATR로 표준화
+float normalizedChange = atrNorm != 0 ? priceChangePrev / atrNorm : 0  // -1 ~ +1 범위로 정규화
+float weightedVolume = normalizedChange * volume / 1000000  // 스케일 조정 (백만 단위)
+
+// 스마트 OBV 누적
+var float smartOBV = 0.0
+smartOBV := smartOBV + weightedVolume
+
+// 중심선 (N일 EMA) - 매수/매도세 판단 기준
+float smartOBVCenter = ta.ema(smartOBV, smartOBVLength)
+
+// 스마트 OBV 상태
+bool smartOBVAboveCenter = smartOBV > smartOBVCenter  // 매수세 우세
+bool smartOBVBelowCenter = smartOBV < smartOBVCenter  // 매도세 우세
+
+// 중심선 크로스 신호
+bool smartOBVCrossUp = ta.crossover(smartOBV, smartOBVCenter)   // 매수세 전환
+bool smartOBVCrossDown = ta.crossunder(smartOBV, smartOBVCenter) // 매도세 전환
+
+// 스퀴즈 모멘텀 감지 (볼린저 밴드 폭 기반 - 더 정확)
+// BB 폭이 좁으면 에너지 응축, 넓어지면 브레이크아웃
+float smartOBVBBUpper = ta.sma(smartOBV, smartOBVLength) + ta.stdev(smartOBV, smartOBVLength) * 2
+float smartOBVBBLower = ta.sma(smartOBV, smartOBVLength) - ta.stdev(smartOBV, smartOBVLength) * 2
+float smartOBVBBWidth = smartOBVBBUpper - smartOBVBBLower
+float smartOBVBBWidthAvg = ta.sma(smartOBVBBWidth, smartOBVLength)
+bool smartOBVSqueeze = smartOBVBBWidth < smartOBVBBWidthAvg / smartOBVSqueezeMult  // BB 폭이 평균의 1/1.5 이하면 스퀴즈
+
+// 스퀴즈 후 브레이크아웃 감지 (BB 돌파 + 방향)
+bool squeezeBBBreakUp = smartOBV > smartOBVBBUpper and smartOBVSqueeze[1]  // 상단 돌파
+bool squeezeBBBreakDown = smartOBV < smartOBVBBLower and smartOBVSqueeze[1]  // 하단 돌파
+bool squeezeBreakoutUp = (smartOBVSqueeze[1] and not smartOBVSqueeze and smartOBVAboveCenter) or squeezeBBBreakUp
+bool squeezeBreakoutDown = (smartOBVSqueeze[1] and not smartOBVSqueeze and smartOBVBelowCenter) or squeezeBBBreakDown
+
+// 스마트 OBV 기울기 (모멘텀) - 3봉 대비 변화율
+float smartOBVSlope = smartOBV - smartOBV[3]
+float smartOBVSlopeNorm = smartOBVBBWidthAvg != 0 ? smartOBVSlope / smartOBVBBWidthAvg * 100 : 0  // 정규화된 기울기
+bool smartOBVMomentumUp = smartOBVSlope > 0 and smartOBVAboveCenter
+bool smartOBVMomentumDown = smartOBVSlope < 0 and smartOBVBelowCenter
+
+// 강한 모멘텀 감지 (기울기가 크면)
+bool smartOBVStrongMomentumUp = smartOBVSlopeNorm > 30 and smartOBVAboveCenter
+bool smartOBVStrongMomentumDown = smartOBVSlopeNorm < -30 and smartOBVBelowCenter
+
+// 스마트 OBV 등급
+string smartOBVGrade = squeezeBreakoutUp and smartOBVStrongMomentumUp ? "STRONG BUY" :
+                       squeezeBreakoutDown and smartOBVStrongMomentumDown ? "STRONG SELL" :
+                       smartOBVMomentumUp and smartOBVAboveCenter ? "BUY" :
+                       smartOBVMomentumDown and smartOBVBelowCenter ? "SELL" :
+                       smartOBVSqueeze ? "SQUEEZE" : "NEUTRAL"
+
 // 피봇/다이버전스
 float pivotHigh = ta.pivothigh(high, pivotLeft, pivotRight)
 float pivotLow = ta.pivotlow(low, pivotLeft, pivotRight)
@@ -748,6 +812,10 @@ longScore += bullishDivergence ? 1 : 0
 longScore += strongPositiveDelta and delta3ConsecutiveBuy ? 3 : (positiveDelta and cvdUptrend ? 2 : positiveDelta ? 1 : 0)
 longScore += deltaBullDiv ? 1 : 0  // Delta 강세 다이버전스
 
+// 스마트 OBV 점수 (잭 웨이드 전략)
+longScore += squeezeBreakoutUp ? 3 : (smartOBVMomentumUp ? 2 : smartOBVAboveCenter ? 1 : 0)
+longScore += smartOBVCrossUp ? 1 : 0  // 매수세 전환 신호
+
 // SHORT 점수용 Delta (참고)
 float shortDeltaScore = strongNegativeDelta and delta3ConsecutiveSell ? 3 : (negativeDelta and cvdDowntrend ? 2 : negativeDelta ? 1 : 0)
 shortDeltaScore += deltaBearDiv ? 1 : 0
@@ -787,8 +855,8 @@ string confReason = highConf1 ? "HTF+SR+VOL" : highConf2 ? "DIV+OVERSOLD" : high
 // S등급: 3TF 상승 + 지지근처 + 거래량 + 고확신 + 매수압력
 bool gradeS = uptrendCount >= 3 and nearSupport3d and volSpikeCount >= 1 and highConfidenceLong and buyPressure > 52
 
-// A등급: 2TF 상승 + 거래량 + 매수압력
-bool gradeA = uptrendCount >= 2 and volSpikeCount >= 1 and buyPressure > 48
+// A등급: 3TF 상승 + 거래량 + 매수압력 강화
+bool gradeA = uptrendCount >= 3 and volSpikeCount >= 1 and buyPressure > 55
 
 // B등급: 2TF 상승 + 1H 상승
 bool gradeB = uptrendCount >= 2 and tf1h_uptrend
@@ -851,7 +919,7 @@ bool exitShortSignal = trailFlipToLong and not tf1h_uptrend == false
 
 // 시그널 모드에 따른 필터링
 bool showSuperLong = superLong and (signalMode == "전체" or signalMode == "STRONG 이상" or signalMode == "SUPER만")
-bool showStrongLong = strongLong and not superLong and (signalMode == "전체" or signalMode == "STRONG 이상")
+bool showStrongLong = strongLong and not superLong and (signalMode == "전체" or signalMode == "STRONG 이상") and (nearSupport3d or smcBullish)
 bool showNormalLong = normalLong and signalMode == "전체"
 
 // ============================================
@@ -1195,6 +1263,19 @@ bgcolor(showSuperLong ? color.new(color.aqua, 60) : na)
 bgcolor(showStrongLong ? color.new(color.yellow, 70) : na)
 bgcolor(gradeA and not strongLong and signalMode == "전체" ? color.new(color.lime, 85) : na)
 bgcolor(exitLongSignal ? color.new(color.red, 70) : na)
+
+// 스마트 OBV 배경색 (중심선 위=청록, 아래=노랑, 스퀴즈=회색)
+bgcolor(showSmartOBV and showSmartOBVBg and smartOBVSqueeze ? color.new(color.gray, 90) : na, title="스마트OBV 스퀴즈")
+bgcolor(showSmartOBV and showSmartOBVBg and not smartOBVSqueeze and smartOBVAboveCenter ? color.new(color.teal, 92) : na, title="스마트OBV 매수세")
+bgcolor(showSmartOBV and showSmartOBVBg and not smartOBVSqueeze and smartOBVBelowCenter ? color.new(color.orange, 92) : na, title="스마트OBV 매도세")
+
+// 스마트 OBV 크로스 신호 표시
+plotshape(showSmartOBV and smartOBVCrossUp and not smartOBVSqueeze, style=shape.circle, location=location.bottom, color=color.teal, size=size.tiny, title="스마트OBV 매수전환")
+plotshape(showSmartOBV and smartOBVCrossDown and not smartOBVSqueeze, style=shape.circle, location=location.bottom, color=color.orange, size=size.tiny, title="스마트OBV 매도전환")
+
+// 스퀴즈 브레이크아웃 신호 (강력)
+plotshape(showSmartOBV and squeezeBreakoutUp, style=shape.diamond, location=location.bottom, color=color.lime, size=size.small, title="스퀴즈 상승돌파")
+plotshape(showSmartOBV and squeezeBreakoutDown, style=shape.diamond, location=location.bottom, color=color.red, size=size.small, title="스퀴즈 하락돌파")
 
 // ============================================
 // SMC 시각화
@@ -1613,14 +1694,15 @@ if showMiniPanel and isMinimalMode and barstate.islast
     table.cell(miniTbl, 2, 8, psychAction, text_color=psychColor, bgcolor=psychBg, text_size=size.small)
     table.cell(miniTbl, 3, 8, nearRoundBelow ? "지지선" : nearRoundAbove ? "저항선" : "", text_color=color.aqua, bgcolor=psychBg, text_size=size.small)
 
-    // Row 9: Delta + 한글 설명
+    // Row 9: Delta + 스마트 OBV
     string deltaKorean = deltaGrade == "STRONG BUY" ? "강매수세" : deltaGrade == "BUY" ? "매수세" : deltaGrade == "STRONG SELL" ? "강매도세" : deltaGrade == "SELL" ? "매도세" : "중립"
-    string cvdKorean = cvdUptrend ? "매수누적" : cvdDowntrend ? "매도누적" : "중립"
+    string smartOBVKorean = smartOBVGrade == "STRONG BUY" ? "강매수" : smartOBVGrade == "BUY" ? "매수" : smartOBVGrade == "STRONG SELL" ? "강매도" : smartOBVGrade == "SELL" ? "매도" : smartOBVGrade == "SQUEEZE" ? "응축" : "중립"
     color deltaBg = deltaGrade == "STRONG BUY" ? color.new(color.lime, 40) : deltaGrade == "BUY" ? color.new(color.green, 50) : deltaGrade == "STRONG SELL" ? color.new(color.fuchsia, 40) : deltaGrade == "SELL" ? color.new(color.red, 50) : color.new(color.gray, 70)
+    color smartOBVColor = smartOBVGrade == "STRONG BUY" ? color.lime : smartOBVGrade == "BUY" ? color.green : smartOBVGrade == "STRONG SELL" ? color.fuchsia : smartOBVGrade == "SELL" ? color.red : smartOBVGrade == "SQUEEZE" ? color.yellow : color.gray
     table.cell(miniTbl, 0, 9, "수급", text_color=color.white, bgcolor=color.new(color.teal, 30), text_size=size.small)
     table.cell(miniTbl, 1, 9, deltaKorean, text_color=deltaColor, bgcolor=deltaBg, text_size=size.small)
     table.cell(miniTbl, 2, 9, str.tostring(deltaRatio, "#") + "%", text_color=deltaColor, bgcolor=deltaBg, text_size=size.small)
-    table.cell(miniTbl, 3, 9, cvdKorean, text_color=cvdUptrend ? color.lime : cvdDowntrend ? color.red : color.gray, bgcolor=deltaBg, text_size=size.small)
+    table.cell(miniTbl, 3, 9, "OBV:" + smartOBVKorean, text_color=smartOBVColor, bgcolor=deltaBg, text_size=size.small)
 
     // Row 10: 일목 구름 상태
     string cloudKorean = priceAboveCloud ? "구름위" : priceBelowCloud ? "구름아래" : "구름내"
@@ -1836,9 +1918,9 @@ if showElliottWave and not na(ewSwingLow)
         array.pop(ewLows)
         array.pop(ewLowBars)
 
-// 피보나치 비율 계산 함수
-ewFibRatio(float start, float end, float current) =>
-    math.abs((current - start) / (end - start) * 100)
+// 피보나치 되돌림 비율 계산 함수 (Wave1에서 얼마나 되돌림했는지)
+ewFibRetracement(float waveStart, float waveEnd, float retracePoint) =>
+    math.abs((waveEnd - retracePoint) / (waveEnd - waveStart) * 100)
 
 // 피보나치 레벨 체크 (허용 오차 포함)
 ewCheckFib(float ratio, float target) =>
@@ -1884,8 +1966,12 @@ if showElliottWave and array.size(ewHighs) >= 3 and array.size(ewLows) >= 3
     bool isLowerHigh = not na(h1) and not na(h2) and h1 < h2
     bool isLowerLow = not na(l1) and not na(l2) and l1 < l2
 
+    // 시간 순서 검증: Wave0(저점) → Wave1(고점) → Wave2(저점) → Wave3(고점)
+    bool validUptrendSequence = lb2 < hb2 and hb2 < lb1 and lb1 < hb1
+    bool validDowntrendSequence = hb2 < lb2 and lb2 < hb1 and hb1 < lb1
+
     // 상승 추세 Impulse
-    if isHigherHigh and isHigherLow
+    if isHigherHigh and isHigherLow and validUptrendSequence
         ewIsUptrend := true
         ewWave0 := l2
         ewWave1 := h2
@@ -1898,14 +1984,14 @@ if showElliottWave and array.size(ewHighs) >= 3 and array.size(ewLows) >= 3
 
         // 피보나치 비율 검증
         float wave1Size = ewWave1 - ewWave0
-        float wave2Retrace = ewFibRatio(ewWave0, ewWave1, ewWave2)
+        float wave2Retrace = ewFibRetracement(ewWave0, ewWave1, ewWave2)
         float wave3Extend = (ewWave3 - ewWave2) / wave1Size * 100
 
-        // Wave 2: 50~78.6% 되돌림 (가장 일반적)
-        bool validWave2 = wave2Retrace >= 38.2 and wave2Retrace <= 88.7
+        // Wave 2: 38.2~78.6% 되돌림 (가장 일반적: 50~61.8%)
+        bool validWave2 = wave2Retrace >= 38.2 and wave2Retrace <= 78.6
 
-        // Wave 3: 161.8% 이상 확장 (가장 강한 파동)
-        bool validWave3 = wave3Extend >= 100
+        // Wave 3: 161.8% 이상 확장 (가장 강한 파동, 절대 가장 짧지 않음)
+        bool validWave3 = wave3Extend >= 161.8
 
         if validWave2 and validWave3
             ewCurrentPattern := "IMPULSE ↑"
@@ -1915,12 +2001,15 @@ if showElliottWave and array.size(ewHighs) >= 3 and array.size(ewLows) >= 3
                 ewCurrentWave := "Wave 3 진행중"
             else
                 ewCurrentWave := "Wave 2 (매수 구간)"
+        else if validWave2 and wave3Extend >= 100
+            ewCurrentPattern := "IMPULSE ↑ (약)"
+            ewCurrentWave := "Wave 3 진행중"
         else if validWave2
             ewCurrentPattern := "ABC 조정 가능"
             ewCurrentWave := "Wave C 진행중"
 
     // 하락 추세 Impulse
-    else if isLowerHigh and isLowerLow
+    else if isLowerHigh and isLowerLow and validDowntrendSequence
         ewIsUptrend := false
         ewWave0 := h2
         ewWave1 := l2
@@ -1932,11 +2021,13 @@ if showElliottWave and array.size(ewHighs) >= 3 and array.size(ewLows) >= 3
         ewWave3Bar := lb1
 
         float wave1Size = ewWave0 - ewWave1
-        float wave2Retrace = ewFibRatio(ewWave0, ewWave1, ewWave2)
+        float wave2Retrace = ewFibRetracement(ewWave0, ewWave1, ewWave2)
         float wave3Extend = (ewWave2 - ewWave3) / wave1Size * 100
 
-        bool validWave2 = wave2Retrace >= 38.2 and wave2Retrace <= 88.7
-        bool validWave3 = wave3Extend >= 100
+        // Wave 2: 38.2~78.6% 되돌림
+        bool validWave2 = wave2Retrace >= 38.2 and wave2Retrace <= 78.6
+        // Wave 3: 161.8% 이상 확장
+        bool validWave3 = wave3Extend >= 161.8
 
         if validWave2 and validWave3
             ewCurrentPattern := "IMPULSE ↓"
@@ -1946,6 +2037,9 @@ if showElliottWave and array.size(ewHighs) >= 3 and array.size(ewLows) >= 3
                 ewCurrentWave := "Wave 3 진행중"
             else
                 ewCurrentWave := "Wave 2 (매도 구간)"
+        else if validWave2 and wave3Extend >= 100
+            ewCurrentPattern := "IMPULSE ↓ (약)"
+            ewCurrentWave := "Wave 3 진행중"
         else if validWave2
             ewCurrentPattern := "ABC 조정 가능"
             ewCurrentWave := "Wave C 진행중"

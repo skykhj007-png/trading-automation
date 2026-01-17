@@ -10,7 +10,10 @@
       "Bash(\"https://script.google.com/macros/s/AKfycbwKxvNYuMuZRXai7sIWOiyJKgxg7R3J45G3fWhJfJD7tBbWvsydreETG1m6lBePpbQ5/exec\")",
       "Bash(git reset:*)",
       "Bash(npx wrangler deploy)",
-      "WebSearch"
+      "WebSearch",
+      "WebFetch(domain:lilys.ai)",
+      "WebFetch(domain:api.telegram.org)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []

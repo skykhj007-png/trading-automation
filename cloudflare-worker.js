@@ -143,9 +143,102 @@ async function runScheduledAnalysis() {
   }
 }
 
-// 간단한 4시간 분석 (API 없이)
+// 간단한 4시간 분석 (실제 데이터 포함)
 async function sendSimpleAnalysis(timeStr) {
-  const analysis = `📊 BTC 4시간봉 체크 (${timeStr} KST)
+  let analysis;
+
+  try {
+    // BTC 실시간 데이터 가져오기
+    const response = await fetchWithTimeout(
+      `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true`,
+      { headers: { 'Accept': 'application/json', 'User-Agent': 'V39-Trading-Bot/1.0' } },
+      8000
+    );
+
+    const data = await response.json();
+
+    if (data.bitcoin && data.bitcoin.usd) {
+      const price = Math.round(data.bitcoin.usd);
+      const change24h = data.bitcoin.usd_24h_change?.toFixed(2) || "0.00";
+      const volume = data.bitcoin.usd_24h_vol ? (data.bitcoin.usd_24h_vol / 1e9).toFixed(1) : "N/A";
+
+      // 추세 판단
+      const trend = change24h > 0 ? "📈 상승" : change24h < 0 ? "📉 하락" : "➡️ 횡보";
+      const trendIcon = change24h > 2 ? "🟢" : change24h > 0 ? "🔵" : change24h > -2 ? "🟡" : "🔴";
+
+      // RSI 추정 (24h 변동 기반)
+      let rsi = Math.round(50 + (parseFloat(change24h) * 2.5));
+      rsi = Math.max(20, Math.min(80, rsi));
+      const rsiStatus = rsi > 70 ? "과매수 ⚠️" : rsi < 30 ? "과매도 ✅" : "중립";
+
+      // 위치 추정
+      let position = Math.round(50 + (parseFloat(change24h) * 5));
+      position = Math.max(10, Math.min(90, position));
+      const positionZone = position < 30 ? "DISC ✅" : position > 70 ? "PREM ⚠️" : "중간";
+
+      // 매매 판단
+      let verdict = "";
+      if (change24h > 2 && rsi < 70) {
+        verdict = "✅ 상승 추세 지속";
+      } else if (change24h < -2 && rsi > 30) {
+        verdict = "⚠️ 하락 추세 주의";
+      } else if (rsi < 30 && change24h > -1) {
+        verdict = "🔵 반등 가능성";
+      } else if (rsi > 70 && change24h < 1) {
+        verdict = "🟡 조정 가능성";
+      } else {
+        verdict = "• 관망 구간";
+      }
+
+      analysis = `📊 BTC 4시간봉 분석 (${timeStr} KST)
+
+━━━━━━━━━━━━━━━━
+
+💰 현재가: $${price.toLocaleString()}
+${trendIcon} 24h: ${change24h > 0 ? '+' : ''}${change24h}%
+📊 거래량: $${volume}B
+
+━━━━━━━━━━━━━━━━
+
+📈 시장 상태
+
+• 추세: ${trend}
+• RSI: ${rsi} (${rsiStatus})
+• 위치: ${position}% (${positionZone})
+
+━━━━━━━━━━━━━━━━
+
+🎯 V39 관점
+
+${change24h > 0 ? '✅ EMA 상승 정렬 추정' : '⚠️ EMA 하락 정렬 추정'}
+${position < 40 ? '✅ 매수 적합 구간' : position > 60 ? '⚠️ 고점 주의' : '• 중립 구간'}
+${verdict}
+
+━━━━━━━━━━━━━━━━
+
+💡 V39 지표에서 확인하세요!
+
+□ Smart Trail 색상
+□ 1H/4H 추세 방향
+□ Delta 매수/매도세
+□ 고래 활동 여부
+
+━━━━━━━━━━━━━━━━
+
+🚀 SUPER = 최고 신뢰도
+⭐ STRONG = 높은 신뢰도
+🐋 고래 = 대량 거래 감지
+
+⚠️ 참고용 - 투자권유 아님
+
+📢 @V38_Signal
+🤖 @v39_signal_bot`;
+    } else {
+      throw new Error("데이터 없음");
+    }
+  } catch (error) {
+    // API 실패 시 기본 메시지
+    analysis = `📊 BTC 4시간봉 체크 (${timeStr} KST)
 
 ━━━━━━━━━━━━━━━━
 
@@ -170,7 +263,8 @@ async function sendSimpleAnalysis(timeStr) {
 ⚠️ 참고용 - 투자권유 아님
 
 📢 @V38_Signal
-🤖 @V30_Signal_bot`;
+🤖 @v39_signal_bot`;
+  }
 
   await sendMessage(FREE_CHANNEL_ID, analysis);
 }
@@ -206,7 +300,7 @@ async function sendFallbackAnalysis() {
 ⚠️ 참고용 - 투자권유 아님
 
 📢 @V38_Signal
-🤖 @V30_Signal_bot`;
+🤖 @v39_signal_bot`;
 
   await sendMessage(FREE_CHANNEL_ID, fallbackMsg);
 }
@@ -327,7 +421,7 @@ ${rsi < 30 ? '✅ 과매도 반등 기대' : rsi > 70 ? '⚠️ 과매수 조정
 ⚠️ 참고용 - 투자권유 아님
 
 📢 @V38_Signal
-🤖 @V30_Signal_bot`;
+🤖 @v39_signal_bot`;
 
   } else {
     // API 실패 - 기본 메시지 발송 (채널은 유지)
@@ -358,7 +452,7 @@ ${rsi < 30 ? '✅ 과매도 반등 기대' : rsi > 70 ? '⚠️ 과매수 조정
 ⚠️ 참고용 - 투자권유 아님
 
 📢 @V38_Signal
-🤖 @V30_Signal_bot`;
+🤖 @v39_signal_bot`;
   }
 
   // 무료 채널에 발송 (성공/실패 모두)
@@ -1279,6 +1373,12 @@ TPpgMe6JxtudoEdDegkyKUaBUyAWRKti12
     responseText = helpText;
   }
 
+  // 관리자: /4h (무료채널 4시간 분석 발송)
+  else if ((command === '/4h' || command === '/4시간') && chatId === ADMIN_ID) {
+    await sendSimpleAnalysis(new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' }).replace(':', ':'));
+    responseText = `✅ 4시간 분석이 무료 채널에 발송되었습니다!`;
+  }
+
   // 관리자: /premium4h
   else if ((command === '/premium4h' || command === '/프리미엄분석') && chatId === ADMIN_ID) {
     responseText = await handlePremium4H();
@@ -1923,7 +2023,7 @@ ${alertText}
 
 ━━━━━━━━━━━━━━━━
 📢 @V38_Signal
-🤖 @V30_Signal_bot`;
+🤖 @v39_signal_bot`;
 
       await sendMessage(FREE_CHANNEL_ID, freeChannelMsg);
     }

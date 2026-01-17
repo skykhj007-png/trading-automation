@@ -1,7 +1,10 @@
 # 민감 정보 - GitHub에 올리지 않음
 CREDENTIALS.txt
+.env
+
+# Claude Code 임시 파일
+tmpclaude-*
 
 # 기타
 .DS_Store
 *.log
-.env
