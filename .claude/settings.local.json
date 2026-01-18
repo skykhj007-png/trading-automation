@@ -13,7 +13,18 @@
       "WebSearch",
       "WebFetch(domain:lilys.ai)",
       "WebFetch(domain:api.telegram.org)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(schtasks:*)",
+      "Bash(findstr:*)",
+      "Bash(Get-ChildItem \"c:\\\\Users\\\\k\\\\trading-automation\" -Filter \"*.ps1\")",
+      "Bash(Select-Object Name, Length, LastWriteTime)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(powershell:*)",
+      "Bash(dir:*)",
+      "Bash(test:*)",
+      "Bash(git config:*)",
+      "Bash(git -c user.name=\"kang Hyunjun\" -c user.email=\"skykhj007@gmail.com\" commit -m \"Fix: 사용자 경로 수정 \\(kim → k\\)\")",
+      "Bash(git -c user.name=\"kang Hyunjun\" -c user.email=\"skykhj007@gmail.com\" commit -m \"Auto-save 시스템 UI 개선 - 깔끔한 출력 포맷\")"
     ],
     "deny": [],
     "ask": []

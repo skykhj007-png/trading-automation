@@ -1,7 +1,7 @@
 # Auto Save All Projects
 # Automatically detects all git repositories in C:\Users\kim
 
-$baseFolder = "C:\Users\kim"
+$baseFolder = "C:\Users\k"
 $debounceSeconds = 3
 $lastSave = @{}
 $watchers = @()
@@ -20,18 +20,15 @@ function Get-GitFolders {
 function Start-Watching {
     $folders = Get-GitFolders
 
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "Auto Save All Projects" -ForegroundColor Green
-    Write-Host "Base: $baseFolder" -ForegroundColor Yellow
-    Write-Host "Watching:" -ForegroundColor Yellow
+    Write-Host "`n[Auto Save] " -NoNewline -ForegroundColor Cyan
+    Write-Host "Watching $($folders.Count) projects in $baseFolder" -ForegroundColor Green
     foreach ($f in $folders) {
         $name = Split-Path $f -Leaf
-        Write-Host "  - $name" -ForegroundColor Yellow
+        Write-Host "  • $name" -ForegroundColor DarkGray
         $lastSave[$f] = [DateTime]::MinValue
     }
-    Write-Host "New projects will be detected automatically!" -ForegroundColor Cyan
-    Write-Host "Press Ctrl+C to stop" -ForegroundColor Yellow
-    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "[Auto Save] " -NoNewline -ForegroundColor Cyan
+    Write-Host "Monitoring for changes... (Ctrl+C to stop)`n" -ForegroundColor Yellow
 
     # Create watchers for each folder
     foreach ($folder in $folders) {
@@ -74,7 +71,9 @@ function Save-Changes {
     $lastSave[$folder] = $now
 
     $projectName = Split-Path $folder -Leaf
-    Write-Host "[$time] [$projectName] $name changed" -ForegroundColor Yellow
+    Write-Host "[$time] " -NoNewline -ForegroundColor DarkGray
+    Write-Host "$projectName" -NoNewline -ForegroundColor Yellow
+    Write-Host " → $name" -ForegroundColor White
 
     # Run git commands
     Push-Location $folder
@@ -82,10 +81,11 @@ function Save-Changes {
     $commitResult = git commit -m "Auto-save: $name ($time)" 2>&1
 
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "[$time] [$projectName] Committed!" -ForegroundColor Green
         git push 2>$null
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "[$time] [$projectName] Pushed!" -ForegroundColor Cyan
+            Write-Host "  ✓ Saved & Pushed" -ForegroundColor Green
+        } else {
+            Write-Host "  ✓ Saved (offline)" -ForegroundColor DarkYellow
         }
     }
     Pop-Location
@@ -93,9 +93,6 @@ function Save-Changes {
 
 # Initial start
 $currentFolders = Start-Watching
-
-Write-Host ""
-Write-Host "Watching for changes..." -ForegroundColor Green
 
 # Check for new projects every 60 seconds
 $lastCheck = Get-Date
@@ -111,7 +108,7 @@ while ($true) {
 
         foreach ($folder in $addedFolders) {
             $name = Split-Path $folder -Leaf
-            Write-Host "[NEW PROJECT DETECTED] $name" -ForegroundColor Magenta
+            Write-Host "`n[Auto Save] New project detected: $name" -ForegroundColor Magenta
 
             $watcher = New-Object System.IO.FileSystemWatcher
             $watcher.Path = $folder
