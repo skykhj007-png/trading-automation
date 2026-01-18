@@ -668,23 +668,23 @@ if showSMC and showFVG and isBearishFVG
     array.push(bearishFVGs, box.new(bar_index - 2, bearFVGTop, bar_index + 15, bearFVGBot, bgcolor=color.new(color.maroon, 80), border_color=color.maroon, border_width=1, border_style=line.style_dashed))
 
 // --- Smart Trail (트레일링 스탑) ---
-atrPeriod = 14
+// atrPeriod는 V40 설정에서 정의됨
 atrMult = 2.0
-atrValue = ta.atr(atrPeriod)
+float atrValueForTrail = ta.atr(atrPeriod)
 
 var float smartTrail = na
 var bool smartTrailUp = true
 
 if smartTrailUp
-    smartTrail := math.max(nz(smartTrail), close - atrValue * atrMult)
+    smartTrail := math.max(nz(smartTrail), close - atrValueForTrail * atrMult)
     if close < smartTrail
         smartTrailUp := false
-        smartTrail := close + atrValue * atrMult
+        smartTrail := close + atrValueForTrail * atrMult
 else
-    smartTrail := math.min(nz(smartTrail), close + atrValue * atrMult)
+    smartTrail := math.min(nz(smartTrail), close + atrValueForTrail * atrMult)
     if close > smartTrail
         smartTrailUp := true
-        smartTrail := close - atrValue * atrMult
+        smartTrail := close - atrValueForTrail * atrMult
 
 // --- Liquidity Levels (Equal Highs/Lows) ---
 var float[] eqHighs = array.new_float(0)
@@ -693,7 +693,7 @@ var int[] eqHighBars = array.new_int(0)
 var int[] eqLowBars = array.new_int(0)
 
 // Equal Highs 감지 (비슷한 고점 = 유동성 타겟)
-eqHighThreshold = atrValue * 0.3
+eqHighThreshold = atrValueForTrail * 0.3
 if not na(swingHigh) and not na(prevSwingHigh)
     if math.abs(swingHigh - prevSwingHigh) < eqHighThreshold
         if array.size(eqHighs) >= 3
