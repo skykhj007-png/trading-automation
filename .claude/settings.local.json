@@ -24,7 +24,17 @@
       "Bash(test:*)",
       "Bash(git config:*)",
       "Bash(git -c user.name=\"kang Hyunjun\" -c user.email=\"skykhj007@gmail.com\" commit -m \"Fix: 사용자 경로 수정 \\(kim → k\\)\")",
-      "Bash(git -c user.name=\"kang Hyunjun\" -c user.email=\"skykhj007@gmail.com\" commit -m \"Auto-save 시스템 UI 개선 - 깔끔한 출력 포맷\")"
+      "Bash(git -c user.name=\"kang Hyunjun\" -c user.email=\"skykhj007@gmail.com\" commit -m \"Auto-save 시스템 UI 개선 - 깔끔한 출력 포맷\")",
+      "Bash(wmic path Win32_VideoController get:*)",
+      "Bash(wmic:*)",
+      "Bash(git -c user.name=\"kang Hyunjun\" -c user.email=\"skykhj007@gmail.com\" commit -m \"Fix: VSCode 창 배치 - 오른쪽 모니터 1920x1080에 세로 3등분\")",
+      "Bash(git -c user.name=\"kang Hyunjun\" -c user.email=\"skykhj007@gmail.com\" commit -m \"Add: 윈도우 시작 프로그램 자동 등록 스크립트\")",
+      "Bash(git -c user.name=\"kang Hyunjun\" -c user.email=\"skykhj007@gmail.com\" commit -m \"Add: VSCode 실행 전 자동 git pull 기능 추가\")",
+      "Bash(git pull:*)",
+      "Bash(git -c user.name=\"kang Hyunjun\" -c user.email=\"skykhj007@gmail.com\" commit -m \"Fix: VSCode 창 배치를 三자 모양으로 수정 \\(세로 3등분 → 가로 3등분\\)\")",
+      "Bash(git -c user.name=\"kang Hyunjun\" -c user.email=\"skykhj007@gmail.com\" commit -m \"Add: Claude Code 설정 파일 추가\")",
+      "Bash(npm --version:*)",
+      "Bash(node --version:*)"
     ],
     "deny": [],
     "ask": []
