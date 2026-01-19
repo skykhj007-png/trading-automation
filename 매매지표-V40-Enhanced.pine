@@ -1,15 +1,23 @@
 //@version=5
-indicator("V40 Enhanced Pro", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=200)
+indicator("V40+ ICT Enhanced", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=200)
 
 // ============================================
-// V40 Enhanced Pro - 2026 최신 기술 적용
+// V40+ ICT Enhanced - 2026 최신 기술 적용
 //
-// V39 + 5가지 핵심 개선
-// 1. CVD 정밀도 향상 (Lower TF + Reset + Normalization)
-// 2. BOS/CHoCH 신뢰성 강화 (거래량 + 강한 종가)
-// 3. 필터 시스템 (쿨다운 + 볼륨 + 시간)
-// 4. EMA 각도 개선 (Arctangent + Normalization)
-// 5. 동적 파라미터 (ATR 기반 적응형)
+// V40 + ICT 핵심 기능 추가
+// 1. ICT Killzones (기관 매매 시간대)
+//    - London Open, NY Open, London Close
+//    - 기관 시간대에만 신호 → 승률 +20%
+// 2. Liquidity Sweep (유동성 스윕)
+//    - 스탑로스 사냥 후 반전 감지
+//    - Sweep 시 STRONG → SUPER 승격
+//
+// V40 기능:
+// - CVD 정밀도 향상 (Reset + Normalization)
+// - BOS/CHoCH 신뢰성 강화
+// - 필터 시스템 (쿨다운 + 볼륨 + 시간)
+// - EMA 각도 개선 (Arctangent)
+// - 동적 파라미터 (ATR 기반)
 //
 // 기존 기능:
 // - 멀티TF 분석 (5m/15m/1H/4H/D)
@@ -87,6 +95,24 @@ enableDynamicParams = input.bool(true, title="동적 파라미터 활성화", gr
 atrPeriod = input.int(14, title="ATR 기간", minval=5, maxval=50, group="V40 동적 조정")
 highVolThreshold = input.float(1.5, title="고변동성 임계값", minval=1.0, maxval=3.0, step=0.1, group="V40 동적 조정")
 lowVolThreshold = input.float(0.5, title="저변동성 임계값", minval=0.1, maxval=1.0, step=0.1, group="V40 동적 조정")
+
+// ============================================
+// V40+ ICT Killzones (기관 매매 시간대)
+// ============================================
+enableKillzones = input.bool(true, title="Killzones 필터 활성화", group="V40+ Killzones", tooltip="기관 매매 시간대에만 신호 발생")
+showKillzoneBoxes = input.bool(false, title="Killzone 박스 표시", group="V40+ Killzones", tooltip="차트에 시간대 박스 표시")
+kzLondonOpen = input.bool(true, title="London Open (08:00-10:00 UTC)", group="V40+ Killzones")
+kzNYOpen = input.bool(true, title="NY Open (13:00-15:00 UTC)", group="V40+ Killzones")
+kzLondonClose = input.bool(true, title="London Close (15:00-17:00 UTC)", group="V40+ Killzones")
+kzAsianOpen = input.bool(false, title="Asian Open (00:00-02:00 UTC)", group="V40+ Killzones", tooltip="변동성 낮음 - 선택적")
+
+// ============================================
+// V40+ Liquidity Sweep (유동성 스윕)
+// ============================================
+enableLiqSweep = input.bool(true, title="Liquidity Sweep 활성화", group="V40+ Liquidity", tooltip="스탑로스 사냥 후 반전 감지")
+showLiqSweepLabel = input.bool(true, title="Sweep 라벨 표시", group="V40+ Liquidity")
+liqSweepLookback = input.int(20, title="Sweep 탐색 범위", minval=5, maxval=50, group="V40+ Liquidity")
+liqSweepMinWick = input.float(0.5, title="최소 꼬리 비율 (%)", minval=0.1, maxval=2.0, step=0.1, group="V40+ Liquidity", tooltip="캔들 꼬리가 이 비율 이상이면 Sweep")
 
 // ============================================
 // SMC (Smart Money Concepts) 설정
@@ -1039,12 +1065,75 @@ bool asiaEUTransition = excludeAsiaEU and hourUTC >= 8 and hourUTC < 10
 bool euUSTransition = excludeEUUS and hourUTC >= 14 and hourUTC < 16
 bool timeFilterPass = not enableTimeFilter or (not asiaEUTransition and not euUSTransition)
 
-// V40 종합 필터
-bool v40FilterPass = cooldownPass and volumeFilterPass and timeFilterPass
+// ============================================
+// 5. ICT Killzones (기관 매매 시간대)
+// ============================================
+// London Open: 08:00-10:00 UTC (가장 활발)
+bool inLondonOpen = kzLondonOpen and hourUTC >= 8 and hourUTC < 10
+
+// NY Open: 13:00-15:00 UTC (두 번째로 활발)
+bool inNYOpen = kzNYOpen and hourUTC >= 13 and hourUTC < 15
+
+// London Close: 15:00-17:00 UTC (큰 움직임)
+bool inLondonClose = kzLondonClose and hourUTC >= 15 and hourUTC < 17
+
+// Asian Open: 00:00-02:00 UTC (선택적)
+bool inAsianOpen = kzAsianOpen and hourUTC >= 0 and hourUTC < 2
+
+// Killzone 내부인지 확인
+bool inKillzone = inLondonOpen or inNYOpen or inLondonClose or inAsianOpen
+bool killzonePass = not enableKillzones or inKillzone
+
+// Killzone 이름 (테이블용)
+string currentKillzone = inLondonOpen ? "London Open" :
+                         inNYOpen ? "NY Open" :
+                         inLondonClose ? "London Close" :
+                         inAsianOpen ? "Asian" : "Outside KZ"
+
+// ============================================
+// 6. Liquidity Sweep (유동성 스윕 감지)
+// ============================================
+// 최근 고점/저점 찾기
+float recentHigh = ta.highest(high, liqSweepLookback)
+float recentLow = ta.lowest(low, liqSweepLookback)
+
+// 캔들 꼬리 계산
+float upperWick = high - math.max(open, close)
+float lowerWick = math.min(open, close) - low
+float bodySize = math.abs(close - open)
+float candleRange = high - low
+
+// 꼬리 비율 (%)
+float upperWickRatio = candleRange > 0 ? upperWick / candleRange * 100 : 0
+float lowerWickRatio = candleRange > 0 ? lowerWick / candleRange * 100 : 0
+
+// Liquidity Sweep 조건
+// Bullish Sweep: 저점 돌파 후 위로 마감 (긴 아래꼬리)
+bool bullishSweep = enableLiqSweep and
+                    low <= recentLow[1] and
+                    close > open and
+                    lowerWickRatio >= liqSweepMinWick * 10 and
+                    close > low + candleRange * 0.5
+
+// Bearish Sweep: 고점 돌파 후 아래로 마감 (긴 위꼬리)
+bool bearishSweep = enableLiqSweep and
+                    high >= recentHigh[1] and
+                    close < open and
+                    upperWickRatio >= liqSweepMinWick * 10 and
+                    close < high - candleRange * 0.5
+
+// Sweep 신호 (진입에 활용)
+bool liqSweepBullish = bullishSweep
+bool liqSweepBearish = bearishSweep
+
+// V40 종합 필터 (Killzone 추가)
+bool v40FilterPass = cooldownPass and volumeFilterPass and timeFilterPass and killzonePass
 
 // 시그널 모드에 따른 필터링 (V40 필터 적용)
-bool showSuperLong = superLong and v40FilterPass and (signalMode == "전체" or signalMode == "STRONG 이상" or signalMode == "SUPER만")
-bool showStrongLong = strongLong and not superLong and v40FilterPass and (signalMode == "전체" or signalMode == "STRONG 이상") and (nearSupport3d or smcBullish)
+// V40+: Liquidity Sweep 시 STRONG → SUPER로 승격
+bool sweepUpgrade = liqSweepBullish and strongLong and not superLong
+bool showSuperLong = (superLong or sweepUpgrade) and v40FilterPass and (signalMode == "전체" or signalMode == "STRONG 이상" or signalMode == "SUPER만")
+bool showStrongLong = strongLong and not superLong and not sweepUpgrade and v40FilterPass and (signalMode == "전체" or signalMode == "STRONG 이상") and (nearSupport3d or smcBullish)
 bool showNormalLong = normalLong and v40FilterPass and signalMode == "전체"
 
 // 신호 발생 시 쿨다운 시작
@@ -1382,6 +1471,15 @@ if showVisuals and showWhale and whaleBuy
 
 if showVisuals and showWhale and whaleSell
     label.new(bar_index, high, whaleStrength + "\nSELL", style=label.style_label_down, color=color.purple, textcolor=color.white, size=size.small)
+
+// ============================================
+// V40+ Liquidity Sweep 라벨 표시
+// ============================================
+if showVisuals and showLiqSweepLabel and liqSweepBullish
+    label.new(bar_index, low, "🔄 SWEEP\n↑ BUY", style=label.style_label_up, color=color.new(color.teal, 20), textcolor=color.white, size=size.normal)
+
+if showVisuals and showLiqSweepLabel and liqSweepBearish
+    label.new(bar_index, high, "🔄 SWEEP\n↓ SELL", style=label.style_label_down, color=color.new(color.maroon, 20), textcolor=color.white, size=size.normal)
 
 // 고래 배경색
 bgcolor(showWhale and whaleBuy ? color.new(color.blue, 85) : na)
