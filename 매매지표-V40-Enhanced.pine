@@ -1109,18 +1109,10 @@ float lowerWickRatio = candleRange > 0 ? lowerWick / candleRange * 100 : 0
 
 // Liquidity Sweep 조건
 // Bullish Sweep: 저점 돌파 후 위로 마감 (긴 아래꼬리)
-bool bullishSweep = enableLiqSweep and
-                    low <= recentLow[1] and
-                    close > open and
-                    lowerWickRatio >= liqSweepMinWick * 10 and
-                    close > low + candleRange * 0.5
+bool bullishSweep = enableLiqSweep and low <= recentLow[1] and close > open and lowerWickRatio >= liqSweepMinWick * 10 and close > low + candleRange * 0.5
 
 // Bearish Sweep: 고점 돌파 후 아래로 마감 (긴 위꼬리)
-bool bearishSweep = enableLiqSweep and
-                    high >= recentHigh[1] and
-                    close < open and
-                    upperWickRatio >= liqSweepMinWick * 10 and
-                    close < high - candleRange * 0.5
+bool bearishSweep = enableLiqSweep and high >= recentHigh[1] and close < open and upperWickRatio >= liqSweepMinWick * 10 and close < high - candleRange * 0.5
 
 // Sweep 신호 (진입에 활용)
 bool liqSweepBullish = bullishSweep
