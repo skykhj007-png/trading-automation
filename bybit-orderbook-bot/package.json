@@ -1,0 +1,28 @@
+{
+  "name": "bybit-orderbook-bot",
+  "version": "1.0.0",
+  "description": "Bybit 실시간 오더북 분석 및 오더블럭 감지 봇",
+  "main": "orderbook-analyzer.js",
+  "scripts": {
+    "start": "node orderbook-analyzer.js",
+    "dev": "nodemon orderbook-analyzer.js"
+  },
+  "keywords": [
+    "bybit",
+    "orderbook",
+    "order-block",
+    "trading",
+    "whale",
+    "telegram"
+  ],
+  "author": "kang Hyunjun",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
