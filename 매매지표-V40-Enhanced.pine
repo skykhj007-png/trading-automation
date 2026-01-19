@@ -60,13 +60,13 @@ pivotRight = input.int(2, title="피봇 우측 바", minval=1, maxval=10, group=
 
 // 1. 쿨다운 시스템
 enableCooldown = input.bool(true, title="신호 쿨다운 활성화", group="V40 필터", tooltip="신호 후 N봉 동안 추가 신호 억제")
-cooldownBars = input.int(5, title="쿨다운 바 수", minval=1, maxval=20, group="V40 필터")
+cooldownBars = input.int(8, title="쿨다운 바 수", minval=1, maxval=20, group="V40 필터", tooltip="15분봉 기준 8봉 = 2시간 간격")
 dynamicCooldown = input.bool(true, title="동적 쿨다운 (ATR 기반)", group="V40 필터", tooltip="변동성 높으면 쿨다운 단축")
 
 // 2. 볼륨 필터
 enableVolumeFilter = input.bool(true, title="볼륨 필터 활성화", group="V40 필터", tooltip="평균 거래량 이상일 때만 신호")
 volumeAvgLength = input.int(20, title="볼륨 평균 기간", minval=5, maxval=100, group="V40 필터")
-minVolumeRatio = input.float(1.0, title="최소 볼륨 배수", minval=0.5, maxval=3.0, step=0.1, group="V40 필터")
+minVolumeRatio = input.float(1.5, title="최소 볼륨 배수", minval=0.5, maxval=3.0, step=0.1, group="V40 필터", tooltip="1.5배 이상 거래량일 때만 신호")
 
 // 3. 시간 필터 (비효율 세션 제외)
 enableTimeFilter = input.bool(true, title="시간 필터 활성화", group="V40 필터", tooltip="아시아-유럽-미국 전환 시간 제외")
@@ -74,7 +74,7 @@ excludeAsiaEU = input.bool(true, title="아시아-유럽 전환 제외 (08:00-10
 excludeEUUS = input.bool(true, title="유럽-미국 전환 제외 (14:00-16:00 UTC)", group="V40 필터")
 
 // 4. CVD Reset 옵션
-cvdResetMode = input.string("없음", title="CVD Reset 모드", options=["없음", "일봉", "세션", "주봉"], group="V40 CVD 개선")
+cvdResetMode = input.string("일봉", title="CVD Reset 모드", options=["없음", "일봉", "세션", "주봉"], group="V40 CVD 개선", tooltip="일봉 리셋 권장 - 더 정확한 다이버전스 감지")
 showCVDNormalized = input.bool(true, title="CVD 정규화 표시", group="V40 CVD 개선", tooltip="고가 자산에서 정확한 CVD")
 
 // 5. BOS/CHoCH 개선 필터
