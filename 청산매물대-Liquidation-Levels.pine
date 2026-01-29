@@ -1,0 +1,259 @@
+//@version=5
+indicator("청산 매물대 (Liquidation Levels) v1.0", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ============================================
+// 청산 매물대 시각화 지표
+//
+// 기능:
+// 1. 레버리지별 청산 가격 수평선 표시
+// 2. 고위험 청산 구간 하이라이트
+// 3. 펀딩비/롱숏 기반 위험도 표시
+// 4. 청산 물량 집중 구간 알림
+//
+// 주의: 이 지표는 예상 청산 레벨을 계산합니다.
+// 실제 청산은 거래소/포지션마다 다를 수 있습니다.
+// ============================================
+
+// ============================================
+// 설정
+// ============================================
+
+// 기본 설정
+showLongLiq = input.bool(true, title="롱 청산 레벨 표시", group="표시 설정")
+showShortLiq = input.bool(true, title="숏 청산 레벨 표시", group="표시 설정")
+showLabels = input.bool(true, title="레버리지 라벨 표시", group="표시 설정")
+showHighRisk = input.bool(true, title="고위험 구간 강조", group="표시 설정")
+
+// 레버리지 선택
+show5x = input.bool(false, title="5x", inline="lev1", group="레버리지 선택")
+show10x = input.bool(true, title="10x", inline="lev1", group="레버리지 선택")
+show25x = input.bool(true, title="25x", inline="lev1", group="레버리지 선택")
+show50x = input.bool(true, title="50x", inline="lev2", group="레버리지 선택")
+show100x = input.bool(true, title="100x", inline="lev2", group="레버리지 선택")
+show125x = input.bool(false, title="125x", inline="lev2", group="레버리지 선택")
+
+// 색상 설정
+longLiqColor = input.color(color.new(color.red, 30), title="롱 청산 색상", group="색상")
+shortLiqColor = input.color(color.new(color.green, 30), title="숏 청산 색상", group="색상")
+highRiskColor = input.color(color.new(color.orange, 50), title="고위험 구간 색상", group="색상")
+
+// 고급 설정
+maintenanceMargin = input.float(0.5, title="유지마진율 (%)", minval=0.1, maxval=2.0, step=0.1, group="고급") / 100
+basePrice = input.string("현재가", title="기준 가격", options=["현재가", "VWAP", "EMA20"], group="고급")
+updateBars = input.int(1, title="업데이트 주기 (봉)", minval=1, maxval=10, group="고급")
+
+// ============================================
+// 기준 가격 계산
+// ============================================
+
+float refPrice = switch basePrice
+    "현재가" => close
+    "VWAP" => ta.vwap
+    "EMA20" => ta.ema(close, 20)
+    => close
+
+// ============================================
+// 청산 가격 계산 함수
+// ============================================
+
+// 롱 청산가 = 진입가 * (1 - 1/레버리지 + 유지마진율)
+calcLongLiqPrice(float entryPrice, float leverage) =>
+    entryPrice * (1 - 1/leverage + maintenanceMargin)
+
+// 숏 청산가 = 진입가 * (1 + 1/레버리지 - 유지마진율)
+calcShortLiqPrice(float entryPrice, float leverage) =>
+    entryPrice * (1 + 1/leverage - maintenanceMargin)
+
+// ============================================
+// 청산 레벨 계산
+// ============================================
+
+// 롱 청산 레벨 (가격 하락 시)
+longLiq5x = calcLongLiqPrice(refPrice, 5)
+longLiq10x = calcLongLiqPrice(refPrice, 10)
+longLiq25x = calcLongLiqPrice(refPrice, 25)
+longLiq50x = calcLongLiqPrice(refPrice, 50)
+longLiq100x = calcLongLiqPrice(refPrice, 100)
+longLiq125x = calcLongLiqPrice(refPrice, 125)
+
+// 숏 청산 레벨 (가격 상승 시)
+shortLiq5x = calcShortLiqPrice(refPrice, 5)
+shortLiq10x = calcShortLiqPrice(refPrice, 10)
+shortLiq25x = calcShortLiqPrice(refPrice, 25)
+shortLiq50x = calcShortLiqPrice(refPrice, 50)
+shortLiq100x = calcShortLiqPrice(refPrice, 100)
+shortLiq125x = calcShortLiqPrice(refPrice, 125)
+
+// ============================================
+// 청산 레벨 라인 그리기
+// ============================================
+
+var line[] longLines = array.new_line()
+var line[] shortLines = array.new_line()
+var label[] liqLabels = array.new_label()
+
+// 업데이트 조건
+bool shouldUpdate = bar_index % updateBars == 0
+
+if shouldUpdate and barstate.islast
+    // 기존 라인/라벨 삭제
+    for ln in longLines
+        line.delete(ln)
+    array.clear(longLines)
+
+    for ln in shortLines
+        line.delete(ln)
+    array.clear(shortLines)
+
+    for lb in liqLabels
+        label.delete(lb)
+    array.clear(liqLabels)
+
+    // 롱 청산 레벨 그리기
+    if showLongLiq
+        if show5x
+            array.push(longLines, line.new(bar_index - 50, longLiq5x, bar_index + 10, longLiq5x, color=longLiqColor, style=line.style_dotted, width=1))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, longLiq5x, "L5x", color=color.new(color.red, 80), textcolor=color.red, style=label.style_label_left, size=size.tiny))
+
+        if show10x
+            array.push(longLines, line.new(bar_index - 50, longLiq10x, bar_index + 10, longLiq10x, color=longLiqColor, style=line.style_dashed, width=1))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, longLiq10x, "L10x", color=color.new(color.red, 80), textcolor=color.red, style=label.style_label_left, size=size.tiny))
+
+        if show25x
+            array.push(longLines, line.new(bar_index - 50, longLiq25x, bar_index + 10, longLiq25x, color=longLiqColor, style=line.style_dashed, width=2))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, longLiq25x, "L25x", color=color.new(color.red, 80), textcolor=color.red, style=label.style_label_left, size=size.small))
+
+        if show50x
+            lnColor50 = showHighRisk ? highRiskColor : longLiqColor
+            array.push(longLines, line.new(bar_index - 50, longLiq50x, bar_index + 10, longLiq50x, color=lnColor50, style=line.style_solid, width=2))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, longLiq50x, "L50x ⚠️", color=color.new(color.orange, 80), textcolor=color.orange, style=label.style_label_left, size=size.small))
+
+        if show100x
+            lnColor100 = showHighRisk ? color.new(color.red, 0) : longLiqColor
+            array.push(longLines, line.new(bar_index - 50, longLiq100x, bar_index + 10, longLiq100x, color=lnColor100, style=line.style_solid, width=3))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, longLiq100x, "L100x 🔥", color=color.new(color.red, 70), textcolor=color.red, style=label.style_label_left, size=size.normal))
+
+        if show125x
+            array.push(longLines, line.new(bar_index - 50, longLiq125x, bar_index + 10, longLiq125x, color=color.new(color.red, 0), style=line.style_solid, width=3))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, longLiq125x, "L125x 💀", color=color.new(color.red, 70), textcolor=color.red, style=label.style_label_left, size=size.normal))
+
+    // 숏 청산 레벨 그리기
+    if showShortLiq
+        if show5x
+            array.push(shortLines, line.new(bar_index - 50, shortLiq5x, bar_index + 10, shortLiq5x, color=shortLiqColor, style=line.style_dotted, width=1))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, shortLiq5x, "S5x", color=color.new(color.green, 80), textcolor=color.green, style=label.style_label_left, size=size.tiny))
+
+        if show10x
+            array.push(shortLines, line.new(bar_index - 50, shortLiq10x, bar_index + 10, shortLiq10x, color=shortLiqColor, style=line.style_dashed, width=1))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, shortLiq10x, "S10x", color=color.new(color.green, 80), textcolor=color.green, style=label.style_label_left, size=size.tiny))
+
+        if show25x
+            array.push(shortLines, line.new(bar_index - 50, shortLiq25x, bar_index + 10, shortLiq25x, color=shortLiqColor, style=line.style_dashed, width=2))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, shortLiq25x, "S25x", color=color.new(color.green, 80), textcolor=color.green, style=label.style_label_left, size=size.small))
+
+        if show50x
+            lnColor50s = showHighRisk ? highRiskColor : shortLiqColor
+            array.push(shortLines, line.new(bar_index - 50, shortLiq50x, bar_index + 10, shortLiq50x, color=lnColor50s, style=line.style_solid, width=2))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, shortLiq50x, "S50x ⚠️", color=color.new(color.orange, 80), textcolor=color.orange, style=label.style_label_left, size=size.small))
+
+        if show100x
+            lnColor100s = showHighRisk ? color.new(color.green, 0) : shortLiqColor
+            array.push(shortLines, line.new(bar_index - 50, shortLiq100x, bar_index + 10, shortLiq100x, color=lnColor100s, style=line.style_solid, width=3))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, shortLiq100x, "S100x 🔥", color=color.new(color.green, 70), textcolor=color.green, style=label.style_label_left, size=size.normal))
+
+        if show125x
+            array.push(shortLines, line.new(bar_index - 50, shortLiq125x, bar_index + 10, shortLiq125x, color=color.new(color.green, 0), style=line.style_solid, width=3))
+            if showLabels
+                array.push(liqLabels, label.new(bar_index + 12, shortLiq125x, "S125x 💀", color=color.new(color.green, 70), textcolor=color.green, style=label.style_label_left, size=size.normal))
+
+// ============================================
+// 청산 구간 도달 감지
+// ============================================
+
+// 고레버리지 청산 구간 근접 알림 (현재가 기준 1% 이내)
+longLiq50xNear = low <= longLiq50x * 1.01 and low >= longLiq50x * 0.99
+longLiq100xNear = low <= longLiq100x * 1.01 and low >= longLiq100x * 0.99
+shortLiq50xNear = high >= shortLiq50x * 0.99 and high <= shortLiq50x * 1.01
+shortLiq100xNear = high >= shortLiq100x * 0.99 and high <= shortLiq100x * 1.01
+
+// 청산 구간 돌파 감지
+longLiq50xBreak = low < longLiq50x[1] and close > longLiq50x
+longLiq100xBreak = low < longLiq100x[1] and close > longLiq100x
+shortLiq50xBreak = high > shortLiq50x[1] and close < shortLiq50x
+shortLiq100xBreak = high > shortLiq100x[1] and close < shortLiq100x
+
+// ============================================
+// 청산 구간 돌파 시 시각 효과
+// ============================================
+
+// 롱 청산 구간 돌파 (급락 후 반등 = 숏 스퀴즈 기회)
+plotshape(longLiq100xBreak and showHighRisk, title="100x 롱청산 스윕", location=location.belowbar, color=color.red, style=shape.triangleup, size=size.normal, text="100x\nSWEEP")
+plotshape(longLiq50xBreak and showHighRisk and not longLiq100xBreak, title="50x 롱청산 스윕", location=location.belowbar, color=color.orange, style=shape.triangleup, size=size.small, text="50x")
+
+// 숏 청산 구간 돌파 (급등 후 하락 = 롱 스퀴즈 기회)
+plotshape(shortLiq100xBreak and showHighRisk, title="100x 숏청산 스윕", location=location.abovebar, color=color.green, style=shape.triangledown, size=size.normal, text="100x\nSWEEP")
+plotshape(shortLiq50xBreak and showHighRisk and not shortLiq100xBreak, title="50x 숏청산 스윕", location=location.abovebar, color=color.teal, style=shape.triangledown, size=size.small, text="50x")
+
+// ============================================
+// 정보 테이블
+// ============================================
+
+var table infoTable = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 85), border_width=1)
+
+if barstate.islast
+    table.cell(infoTable, 0, 0, "청산 매물대", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 0, "가격", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+
+    // 롱 청산 레벨
+    table.cell(infoTable, 0, 1, "롱100x 청산", text_color=color.red, text_size=size.tiny)
+    table.cell(infoTable, 1, 1, str.tostring(longLiq100x, "#.##"), text_color=color.red, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 2, "롱50x 청산", text_color=color.orange, text_size=size.tiny)
+    table.cell(infoTable, 1, 2, str.tostring(longLiq50x, "#.##"), text_color=color.orange, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 3, "롱25x 청산", text_color=color.yellow, text_size=size.tiny)
+    table.cell(infoTable, 1, 3, str.tostring(longLiq25x, "#.##"), text_color=color.yellow, text_size=size.tiny)
+
+    // 구분선
+    table.cell(infoTable, 0, 4, "───────", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 4, "───────", text_color=color.gray, text_size=size.tiny)
+
+    // 숏 청산 레벨
+    table.cell(infoTable, 0, 5, "숏25x 청산", text_color=color.lime, text_size=size.tiny)
+    table.cell(infoTable, 1, 5, str.tostring(shortLiq25x, "#.##"), text_color=color.lime, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 6, "숏50x 청산", text_color=color.teal, text_size=size.tiny)
+    table.cell(infoTable, 1, 6, str.tostring(shortLiq50x, "#.##"), text_color=color.teal, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 7, "숏100x 청산", text_color=color.green, text_size=size.tiny)
+    table.cell(infoTable, 1, 7, str.tostring(shortLiq100x, "#.##"), text_color=color.green, text_size=size.tiny)
+
+// ============================================
+// 알림 설정
+// ============================================
+
+// 롱 청산 구간 접근 알림
+alertcondition(longLiq50xNear, title="롱50x 청산구간 접근", message="{{ticker}}: 롱 50x 청산 구간 접근 중! 가격: {{close}}")
+alertcondition(longLiq100xNear, title="롱100x 청산구간 접근", message="{{ticker}}: 롱 100x 청산 구간 접근 중! 가격: {{close}}")
+
+// 숏 청산 구간 접근 알림
+alertcondition(shortLiq50xNear, title="숏50x 청산구간 접근", message="{{ticker}}: 숏 50x 청산 구간 접근 중! 가격: {{close}}")
+alertcondition(shortLiq100xNear, title="숏100x 청산구간 접근", message="{{ticker}}: 숏 100x 청산 구간 접근 중! 가격: {{close}}")
+
+// 청산 스윕 알림 (반전 기회)
+alertcondition(longLiq50xBreak or longLiq100xBreak, title="롱 청산 스윕", message="🔥 {{ticker}}: 롱 청산 스윕 발생! 반등 기회? 가격: {{close}}")
+alertcondition(shortLiq50xBreak or shortLiq100xBreak, title="숏 청산 스윕", message="🔥 {{ticker}}: 숏 청산 스윕 발생! 하락 기회? 가격: {{close}}")
+
+// 복합 알림
+alertcondition(longLiq100xBreak or shortLiq100xBreak, title="100x 청산 스윕", message="💀 {{ticker}}: 100x 레버리지 청산 스윕! 대량 청산 발생 추정. 가격: {{close}}")

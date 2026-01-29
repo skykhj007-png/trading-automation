@@ -1,28 +1,31 @@
 //@version=5
-indicator("V40+ ICT Enhanced v1.2 (2026.01.21)", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=200)
+indicator("V42 Complete - ICT + Harmonic + 정확성필터 (2026.01.27)", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=300)
 
 // ============================================
-// V40+ ICT Enhanced - 2026 최신 기술 적용
+// V42 Complete - 모든 기능 통합 완전판
 //
-// V40 + ICT 핵심 기능 추가
+// ★★★ V40 ICT 전체 기능 ★★★
 // 1. ICT Killzones (기관 매매 시간대)
-//    - London Open, NY Open, London Close
-//    - 기관 시간대에만 신호 → 승률 +20%
 // 2. Liquidity Sweep (유동성 스윕)
-//    - 스탑로스 사냥 후 반전 감지
-//    - Sweep 시 STRONG → SUPER 승격
+// 3. CVD 정밀도 (Reset + Normalization)
+// 4. 고래 감지 (대량 매수/매도)
+// 5. 30점 점수 시스템
+// 6. 멀티TF 분석 (1H/4H/일봉)
+// 7. 지지/저항 레벨
+// 8. 이치모쿠 구름
+// 9. Smart Trail / BOS / CHoCH
+// 10. Delta / Smart OBV
 //
-// V40 기능:
-// - CVD 정밀도 향상 (Reset + Normalization)
-// - BOS/CHoCH 신뢰성 강화
-// - 필터 시스템 (쿨다운 + 볼륨 + 시간)
-// - EMA 각도 개선 (Arctangent)
-// - 동적 파라미터 (ATR 기반)
+// ★★★ V41 하모닉 패턴 ★★★
+// - Gartley, Bat, Crab, Butterfly
+// - Cypher, Shark, 707, AB=CD
+// - PRZ 자동 계산 + TP/SL
+// - RSI BAMM
 //
-// 기존 기능:
-// - 멀티TF 분석 (5m/15m/1H/4H/D)
-// - 시장 구조 (HH/HL/LH/LL)
-// - 30점 점수 시스템
+// ★★★ 정확성 필터 (신규) ★★★
+// - 품질 점수 필터
+// - 추세/거래량/RSI 확인
+// - 컨플루언스 시스템
 // ============================================
 
 // ============================================
@@ -50,7 +53,7 @@ showSR = input.bool(true, title="지지/저항 표시", group="표시 설정") a
 showHTFTrend = input.bool(true, title="HTF 추세 표시", group="표시 설정")
 showEMA = input.bool(false, title="EMA 표시", group="표시 설정") and not isMinimalMode and showVisuals
 showBB = input.bool(false, title="볼린저밴드 표시", group="표시 설정") and not isMinimalMode and showVisuals
-showDivergence = input.bool(false, title="다이버전스 표시", group="표시 설정") and not isMinimalMode and showVisuals
+showDivergence = input.bool(false, title="다이버전스 표시 ⚠️", group="표시 설정", tooltip="⚠️ 차트 마커 비활성화됨 (Pine Script plot 제한 64개 초과). 점수 시스템에는 반영됨. 알람으로 대체 가능.") and not isMinimalMode and showVisuals
 showInfoTable = input.bool(true, title="정보 테이블", group="표시 설정") and not isMinimalMode
 showMiniPanel = input.bool(true, title="미니 패널 (최소화 모드)", group="표시 설정")  // 최소화 모드용 간단 패널
 showSignalLabel = input.bool(false, title="시그널 라벨", group="표시 설정") and not isMinimalMode
@@ -117,7 +120,7 @@ liqSweepMinWick = input.float(0.5, title="최소 꼬리 비율 (%)", minval=0.1,
 // ============================================
 // V40+ 청산 매물대 (Liquidation Levels)
 // ============================================
-enableLiqLevels = input.bool(true, title="청산 레벨 표시", group="V40+ 청산매물대", tooltip="레버리지별 예상 청산 가격대 표시")
+enableLiqLevels = input.bool(true, title="청산 레벨 표시 ⚠️", group="V40+ 청산매물대", tooltip="⚠️ 청산 스윕 마커 비활성화됨 (Pine Script plot 제한). 라인/라벨은 정상 표시. 스윕 알람으로 대체 가능.")
 showLongLiq = input.bool(true, title="롱 청산 레벨 (하락 시)", group="V40+ 청산매물대")
 showShortLiq = input.bool(true, title="숏 청산 레벨 (상승 시)", group="V40+ 청산매물대")
 showLiqLabels = input.bool(true, title="청산 라벨 표시", group="V40+ 청산매물대")
@@ -132,7 +135,7 @@ liqSweepBoost = input.bool(true, title="청산 스윕 시 신호 강화", group=
 // ============================================
 // V40+ 실제 청산 매물대 (Coinglass 기반 고정 레벨)
 // ============================================
-enableRealLiqLevels = input.bool(true, title="실제 청산 매물대 표시", group="V40+ 실제 청산매물대", tooltip="Coinglass 등에서 확인한 실제 청산 집중 구간")
+enableRealLiqLevels = input.bool(true, title="실제 청산 매물대 표시 ⚠️", group="V40+ 실제 청산매물대", tooltip="⚠️ 스윕 마커 비활성화됨 (Pine Script plot 제한). 라인/라벨은 정상 표시. 스윕 알람으로 대체 가능.")
 showRealLiqLabels = input.bool(true, title="라벨 표시", group="V40+ 실제 청산매물대")
 
 // 롱 청산 집중 구간 (가격 하락 시 대량 청산)
@@ -192,7 +195,7 @@ whalePriceMove = input.float(0.5, title="고래 가격 변동 (%)", minval=0.1, 
 // ============================================
 // 심리적 매매 구간 설정
 // ============================================
-showPsychLevels = input.bool(true, title="심리적 구간 표시", group="심리적 구간")
+showPsychLevels = input.bool(true, title="심리적 구간 표시", group="심리적 구간", tooltip="⚠️ 플롯 제한(64개)으로 차트 마커(매수/매도 구간 삼각형)는 비활성화됨. 배경색 표시는 정상 작동.")
 showRoundNumbers = input.bool(true, title="라운드 넘버 표시", group="심리적 구간")
 showFearGreed = input.bool(true, title="공포/탐욕 지표", group="심리적 구간")
 showVolProfile = input.bool(true, title="볼륨 집중 구간", group="심리적 구간")
@@ -229,6 +232,60 @@ ewFibTolerance = input.float(5.0, title="피보나치 허용 오차 (%)", minval
 ewImpulseColor = input.color(color.new(color.blue, 0), title="Impulse 색상", group="엘리엇 파동")
 ewCorrectiveColor = input.color(color.new(color.orange, 0), title="Corrective 색상", group="엘리엇 파동")
 ewGoldenZoneColor = input.color(color.new(color.green, 80), title="골든존 색상", group="엘리엇 파동")
+
+// ============================================
+// ★★★ 하모닉 패턴 설정 (V42 신규) ★★★
+// ============================================
+showHarmonic = input.bool(true, title="하모닉 패턴 표시", group="하모닉 패턴")
+showHarmonicLabels = input.bool(true, title="패턴 라벨", group="하모닉 패턴")
+showPRZ = input.bool(true, title="PRZ 구간", group="하모닉 패턴")
+showTPSL = input.bool(true, title="TP/SL 레벨", group="하모닉 패턴")
+harmonicFibTolerance = input.float(5.0, title="피보나치 허용 오차 (%)", minval=1.0, maxval=15.0, group="하모닉 패턴")
+harmonicSwingLen = input.int(10, title="스윙 길이", minval=3, maxval=30, group="하모닉 패턴")
+
+// 개별 패턴 ON/OFF
+showGartley = input.bool(true, title="Gartley", inline="hpat1", group="하모닉 패턴 선택")
+showBat = input.bool(true, title="Bat", inline="hpat1", group="하모닉 패턴 선택")
+showCrab = input.bool(true, title="Crab", inline="hpat1", group="하모닉 패턴 선택")
+showButterfly = input.bool(true, title="Butterfly", inline="hpat2", group="하모닉 패턴 선택")
+showCypher = input.bool(true, title="Cypher", inline="hpat2", group="하모닉 패턴 선택")
+show707 = input.bool(true, title="707", inline="hpat2", group="하모닉 패턴 선택")
+showShark = input.bool(true, title="Shark", inline="hpat3", group="하모닉 패턴 선택")
+showABCD = input.bool(true, title="AB=CD", inline="hpat3", group="하모닉 패턴 선택")
+
+// RSI BAMM 설정
+showRSIBAMM = input.bool(true, title="RSI BAMM 활성화", group="RSI BAMM")
+rsiBAMMLength = input.int(14, title="RSI 길이", group="RSI BAMM")
+rsiBAMMOB = input.int(70, title="RSI 과매수", group="RSI BAMM")
+rsiBAMMOS = input.int(30, title="RSI 과매도", group="RSI BAMM")
+
+// 하모닉 색상
+harmonicBullColor = input.color(color.new(color.green, 20), title="Bullish", group="하모닉 색상")
+harmonicBearColor = input.color(color.new(color.red, 20), title="Bearish", group="하모닉 색상")
+przColor = input.color(color.new(color.yellow, 70), title="PRZ", group="하모닉 색상")
+
+// ============================================
+// ★★★ 정확성 필터 설정 (V42 신규) ★★★
+// ============================================
+// 품질 필터
+minQualityScore = input.int(60, title="최소 품질 점수 (%)", minval=0, maxval=100, step=10, group="정확성 필터", tooltip="이 점수 이상의 패턴만 신호 발생")
+requirePerfect = input.bool(false, title="Perfect 패턴만", group="정확성 필터", tooltip="Perfect 비율 패턴만 신호 발생")
+
+// RSI 확인 필터
+useRSIConfirm = input.bool(true, title="RSI 확인 필터", group="정확성 필터", tooltip="PRZ에서 RSI 과매수/과매도 확인")
+rsiConfirmLevel = input.int(35, title="RSI 확인 레벨", minval=20, maxval=40, group="정확성 필터")
+
+// 추세 필터
+useTrendFilter = input.bool(true, title="추세 필터", group="정확성 필터", tooltip="EMA 방향과 일치하는 신호만")
+trendEMALen = input.int(55, title="추세 EMA 길이", group="정확성 필터")
+
+// 거래량 필터 (하모닉용)
+useHarmonicVolumeFilter = input.bool(true, title="하모닉 거래량 필터", group="정확성 필터", tooltip="평균 이상 거래량에서만 신호")
+harmonicVolumeMultiplier = input.float(1.2, title="거래량 배수", minval=1.0, maxval=3.0, step=0.1, group="정확성 필터")
+
+// 컨플루언스 (복합 확인)
+useConfluence = input.bool(true, title="컨플루언스 필터", group="정확성 필터", tooltip="여러 조건 충족 시만 신호")
+minConfluenceScore = input.int(3, title="최소 컨플루언스", minval=1, maxval=5, group="정확성 필터")
 
 // ============================================
 // 현재 TF 기본 지표
@@ -454,7 +511,7 @@ color deltaColor = deltaGrade == "STRONG BUY" ? color.lime : deltaGrade == "BUY"
 // ============================================
 
 // 스마트 OBV 설정
-showSmartOBV = input.bool(true, title="스마트 OBV 활성화", group="스마트 OBV")
+showSmartOBV = input.bool(true, title="스마트 OBV 활성화", group="스마트 OBV", tooltip="⚠️ 플롯 제한(64개)으로 골든크로스/데드크로스/스퀴즈 마커는 비활성화됨. 배경색 표시는 정상 작동.")
 smartOBVLength = input.int(20, title="중심선 길이", minval=5, maxval=50, group="스마트 OBV")
 smartOBVSqueezeMult = input.float(1.5, title="스퀴즈 BB 배수", minval=1.0, maxval=3.0, step=0.1, group="스마트 OBV", tooltip="BB 폭이 이 배수 이하면 스퀴즈")
 showSmartOBVBg = input.bool(true, title="배경색 표시", group="스마트 OBV")
@@ -944,6 +1001,321 @@ int trendScore = uptrendCount + emaAlignedUpCount + macdBullCount
 string trendStrength = trendScore >= 12 ? "VERY STRONG" : trendScore >= 10 ? "STRONG" : trendScore >= 7 ? "MODERATE" : trendScore >= 5 ? "WEAK" : "BEAR"
 
 // ============================================
+// ★★★ 하모닉 패턴 감지 (V42 신규) ★★★
+// ============================================
+
+// 피보나치 상수
+float HFIB_382 = 0.382
+float HFIB_50 = 0.5
+float HFIB_618 = 0.618
+float HFIB_707 = 0.707
+float HFIB_786 = 0.786
+float HFIB_886 = 0.886
+float HFIB_113 = 1.13
+float HFIB_127 = 1.272
+float HFIB_141 = 1.414
+float HFIB_161 = 1.618
+
+// 피보나치 허용 오차 체크
+isWithinHarmonicTol(float value, float target, float tolerance) =>
+    math.abs(value - target) <= tolerance / 100
+
+// 패턴 감지 함수들
+isHarmonicGartley(float xab, float xad) =>
+    xab >= 0.588 - harmonicFibTolerance/100 and xab <= 0.648 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_786, harmonicFibTolerance)
+
+isHarmonicBat(float xab, float xad) =>
+    xab >= 0.382 - harmonicFibTolerance/100 and xab <= 0.50 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_886, harmonicFibTolerance)
+
+isHarmonicCrab(float xab, float xad) =>
+    xab >= 0.382 - harmonicFibTolerance/100 and xab <= 0.618 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_161, harmonicFibTolerance)
+
+isHarmonicButterfly(float xab, float xad) =>
+    xab >= 0.756 - harmonicFibTolerance/100 and xab <= 0.816 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_127, harmonicFibTolerance)
+
+isHarmonicCypher(float xab, float xac) =>
+    xab >= 0.382 - harmonicFibTolerance/100 and xab <= 0.618 + harmonicFibTolerance/100 and xac >= 1.13 - harmonicFibTolerance/100 and xac <= 1.414 + harmonicFibTolerance/100
+
+isHarmonic707(float xab, float xad) =>
+    xab >= 0.677 - harmonicFibTolerance/100 and xab <= 0.737 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_141, harmonicFibTolerance)
+
+isHarmonicShark(float xab, float xad) =>
+    xab >= 0.382 - harmonicFibTolerance/100 and xab <= 0.618 + harmonicFibTolerance/100 and xad >= 0.886 - harmonicFibTolerance/100 and xad <= 1.13 + harmonicFibTolerance/100
+
+isHarmonicABCD(float ab, float cd) =>
+    float ratio = cd / ab
+    isWithinHarmonicTol(ratio, 1.0, harmonicFibTolerance) or isWithinHarmonicTol(ratio, HFIB_127, harmonicFibTolerance) or isWithinHarmonicTol(ratio, HFIB_161, harmonicFibTolerance)
+
+// 하모닉 스윙 포인트 수집
+var array<float> harmonicSwingHighs = array.new_float(0)
+var array<float> harmonicSwingLows = array.new_float(0)
+var array<int> harmonicSwingHighBars = array.new_int(0)
+var array<int> harmonicSwingLowBars = array.new_int(0)
+
+harmonicPh = ta.pivothigh(high, harmonicSwingLen, harmonicSwingLen)
+harmonicPl = ta.pivotlow(low, harmonicSwingLen, harmonicSwingLen)
+
+if not na(harmonicPh)
+    array.unshift(harmonicSwingHighs, harmonicPh)
+    array.unshift(harmonicSwingHighBars, bar_index - harmonicSwingLen)
+    if array.size(harmonicSwingHighs) > 10
+        array.pop(harmonicSwingHighs)
+        array.pop(harmonicSwingHighBars)
+
+if not na(harmonicPl)
+    array.unshift(harmonicSwingLows, harmonicPl)
+    array.unshift(harmonicSwingLowBars, bar_index - harmonicSwingLen)
+    if array.size(harmonicSwingLows) > 10
+        array.pop(harmonicSwingLows)
+        array.pop(harmonicSwingLowBars)
+
+// 패턴 변수
+var string currentHarmonicPattern = ""
+var bool currentHarmonicBullish = false
+var float currentHarmonicTP1 = na
+var float currentHarmonicTP2 = na
+var float currentHarmonicSL = na
+var float currentHarmonicQuality = 0.0
+var bool currentHarmonicIsPerfect = false
+
+// 패턴 찾기 함수
+findHarmonicPattern() =>
+    string patternName = ""
+    bool isBullish = false
+    float xP = na, float aP = na, float bP = na, float cP = na, float dP = na
+    int dB = na
+
+    if array.size(harmonicSwingHighs) >= 3 and array.size(harmonicSwingLows) >= 3
+        // Bullish 패턴
+        if array.size(harmonicSwingLows) >= 3 and array.size(harmonicSwingHighs) >= 2
+            tX = array.get(harmonicSwingLows, 2)
+            tA = array.get(harmonicSwingHighs, 1)
+            tB = array.get(harmonicSwingLows, 1)
+            tC = array.get(harmonicSwingHighs, 0)
+            tD = array.get(harmonicSwingLows, 0)
+            tXB = array.get(harmonicSwingLowBars, 2)
+            tAB = array.get(harmonicSwingHighBars, 1)
+            tBB = array.get(harmonicSwingLowBars, 1)
+            tCB = array.get(harmonicSwingHighBars, 0)
+            tDB = array.get(harmonicSwingLowBars, 0)
+
+            if tXB < tAB and tAB < tBB and tBB < tCB and tCB < tDB
+                if tA > tX and tB < tA and tC > tB and tD < tC
+                    xa = math.abs(tA - tX)
+                    xabRatio = math.abs(tB - tX) / xa
+                    xadRatio = math.abs(tD - tX) / xa
+                    xacRatio = math.abs(tC - tX) / xa
+                    ab = math.abs(tB - tA)
+                    cd = math.abs(tD - tC)
+
+                    if showGartley and isHarmonicGartley(xabRatio, xadRatio)
+                        patternName := "Gartley"
+                    else if showBat and isHarmonicBat(xabRatio, xadRatio)
+                        patternName := "Bat"
+                    else if showCrab and isHarmonicCrab(xabRatio, xadRatio)
+                        patternName := "Crab"
+                    else if showButterfly and isHarmonicButterfly(xabRatio, xadRatio)
+                        patternName := "Butterfly"
+                    else if showCypher and isHarmonicCypher(xabRatio, xacRatio)
+                        patternName := "Cypher"
+                    else if show707 and isHarmonic707(xabRatio, xadRatio)
+                        patternName := "707"
+                    else if showShark and isHarmonicShark(xabRatio, xadRatio)
+                        patternName := "Shark"
+                    else if showABCD and isHarmonicABCD(ab, cd)
+                        patternName := "AB=CD"
+
+                    if patternName != ""
+                        isBullish := true
+                        xP := tX, aP := tA, bP := tB, cP := tC, dP := tD
+                        dB := tDB
+
+        // Bearish 패턴
+        if patternName == "" and array.size(harmonicSwingHighs) >= 3 and array.size(harmonicSwingLows) >= 2
+            tX = array.get(harmonicSwingHighs, 2)
+            tA = array.get(harmonicSwingLows, 1)
+            tB = array.get(harmonicSwingHighs, 1)
+            tC = array.get(harmonicSwingLows, 0)
+            tD = array.get(harmonicSwingHighs, 0)
+            tXB = array.get(harmonicSwingHighBars, 2)
+            tAB = array.get(harmonicSwingLowBars, 1)
+            tBB = array.get(harmonicSwingHighBars, 1)
+            tCB = array.get(harmonicSwingLowBars, 0)
+            tDB = array.get(harmonicSwingHighBars, 0)
+
+            if tXB < tAB and tAB < tBB and tBB < tCB and tCB < tDB
+                if tA < tX and tB > tA and tC < tB and tD > tC
+                    xa = math.abs(tA - tX)
+                    xabRatio = math.abs(tB - tX) / xa
+                    xadRatio = math.abs(tD - tX) / xa
+                    xacRatio = math.abs(tC - tX) / xa
+                    ab = math.abs(tB - tA)
+                    cd = math.abs(tD - tC)
+
+                    if showGartley and isHarmonicGartley(xabRatio, xadRatio)
+                        patternName := "Gartley"
+                    else if showBat and isHarmonicBat(xabRatio, xadRatio)
+                        patternName := "Bat"
+                    else if showCrab and isHarmonicCrab(xabRatio, xadRatio)
+                        patternName := "Crab"
+                    else if showButterfly and isHarmonicButterfly(xabRatio, xadRatio)
+                        patternName := "Butterfly"
+                    else if showCypher and isHarmonicCypher(xabRatio, xacRatio)
+                        patternName := "Cypher"
+                    else if show707 and isHarmonic707(xabRatio, xadRatio)
+                        patternName := "707"
+                    else if showShark and isHarmonicShark(xabRatio, xadRatio)
+                        patternName := "Shark"
+                    else if showABCD and isHarmonicABCD(ab, cd)
+                        patternName := "AB=CD"
+
+                    if patternName != ""
+                        isBullish := false
+                        xP := tX, aP := tA, bP := tB, cP := tC, dP := tD
+                        dB := tDB
+
+    [patternName, isBullish, xP, aP, bP, cP, dP, dB]
+
+[detectedHarmonicPattern, harmonicBullish, hxP, haP, hbP, hcP, hdP, hdB] = findHarmonicPattern()
+
+// TP/SL 계산
+calcHarmonicTPSL(float a, float d, float x, bool isBullish) =>
+    ad = math.abs(d - a)
+    xa = math.abs(a - x)
+    float tp1 = isBullish ? d + ad * 0.382 : d - ad * 0.382
+    float tp2 = isBullish ? d + ad * 0.618 : d - ad * 0.618
+    float sl = isBullish ? x - xa * 0.1 : x + xa * 0.1
+    [tp1, tp2, sl]
+
+// 품질 점수 계산
+calcHarmonicQuality(string patternName, float xP, float aP, float bP, float dP) =>
+    if na(xP) or na(aP) or na(bP) or na(dP)
+        0.0
+    else
+        xa = math.abs(aP - xP)
+        xabRatio = math.abs(bP - xP) / xa
+        xadRatio = math.abs(dP - xP) / xa
+        float targetXAB = patternName == "Gartley" ? 0.618 : patternName == "Bat" ? 0.50 : patternName == "Crab" ? 0.618 : patternName == "Butterfly" ? 0.786 : patternName == "707" ? 0.707 : 0.5
+        float targetXAD = patternName == "Gartley" ? 0.786 : patternName == "Bat" ? 0.886 : patternName == "Crab" ? 1.618 : patternName == "Butterfly" ? 1.272 : patternName == "707" ? 1.414 : 1.0
+        float xabAccuracy = math.max(0.0, 30.0 - math.abs(xabRatio - targetXAB) * 100)
+        float xadAccuracy = math.max(0.0, 30.0 - math.abs(xadRatio - targetXAD) * 50)
+        math.min(100.0, 40.0 + xabAccuracy + xadAccuracy)
+
+// 패턴 업데이트
+if detectedHarmonicPattern != "" and not na(hdB) and bar_index - hdB < 5
+    currentHarmonicPattern := detectedHarmonicPattern
+    currentHarmonicBullish := harmonicBullish
+    currentHarmonicQuality := calcHarmonicQuality(detectedHarmonicPattern, hxP, haP, hbP, hdP)
+    currentHarmonicIsPerfect := currentHarmonicQuality >= 80
+    [tp1, tp2, sl] = calcHarmonicTPSL(haP, hdP, hxP, harmonicBullish)
+    currentHarmonicTP1 := tp1
+    currentHarmonicTP2 := tp2
+    currentHarmonicSL := sl
+
+// 하모닉 시각화
+var line hLineXA = na, var line hLineAB = na, var line hLineBC = na, var line hLineCD = na
+var label hPatternLabel = na
+var box hPrzBox = na
+var line hTp1Line = na, var line hTp2Line = na, var line hSlLine = na
+
+if showHarmonic and detectedHarmonicPattern != "" and not na(hdB) and bar_index - hdB < 5
+    hPatternColor = harmonicBullish ? harmonicBullColor : harmonicBearColor
+
+    line.delete(hLineXA), line.delete(hLineAB), line.delete(hLineBC), line.delete(hLineCD)
+    label.delete(hPatternLabel), box.delete(hPrzBox)
+    line.delete(hTp1Line), line.delete(hTp2Line), line.delete(hSlLine)
+
+    if showHarmonicLabels
+        labelY = harmonicBullish ? hdP - atrValueForTrail * 0.5 : hdP + atrValueForTrail * 0.5
+        labelStyle = harmonicBullish ? label.style_label_up : label.style_label_down
+        qualityStr = currentHarmonicIsPerfect ? " PERFECT" : " Q:" + str.tostring(currentHarmonicQuality, "#") + "%"
+        labelText = (harmonicBullish ? "BULL " : "BEAR ") + detectedHarmonicPattern + qualityStr
+        hPatternLabel := label.new(hdB, labelY, labelText, color=hPatternColor, textcolor=color.white, style=labelStyle, size=size.normal)
+
+    if showPRZ
+        xa = math.abs(haP - hxP)
+        przTop = harmonicBullish ? hdP : hdP + xa * 0.1
+        przBottom = harmonicBullish ? hdP - xa * 0.1 : hdP
+        hPrzBox := box.new(hdB - 5, math.max(przTop, przBottom), hdB + 20, math.min(przTop, przBottom), bgcolor=przColor, border_color=color.yellow)
+
+    if showTPSL and not na(currentHarmonicTP1)
+        hTp1Line := line.new(hdB, currentHarmonicTP1, bar_index + 15, currentHarmonicTP1, color=color.lime, width=2, style=line.style_dashed)
+        hTp2Line := line.new(hdB, currentHarmonicTP2, bar_index + 15, currentHarmonicTP2, color=color.lime, width=2, style=line.style_dashed)
+        hSlLine := line.new(hdB, currentHarmonicSL, bar_index + 15, currentHarmonicSL, color=color.red, width=2, style=line.style_dashed)
+
+// RSI BAMM
+harmonicRsiValue = ta.rsi(close, rsiBAMMLength)
+harmonicRsiOB = harmonicRsiValue > rsiBAMMOB
+harmonicRsiOS = harmonicRsiValue < rsiBAMMOS
+harmonicRsiCross50Up = ta.crossover(harmonicRsiValue, 50)
+harmonicRsiCross50Down = ta.crossunder(harmonicRsiValue, 50)
+
+hPriceHigh = high > ta.highest(high, 14)[1]
+hPriceLow = low < ta.lowest(low, 14)[1]
+hRsiHigher = harmonicRsiValue > ta.highest(harmonicRsiValue, 14)[1]
+hRsiLower = harmonicRsiValue < ta.lowest(harmonicRsiValue, 14)[1]
+
+hBullishDiv = hPriceLow and not hRsiLower and harmonicRsiValue[1] < 40
+hBearishDiv = hPriceHigh and not hRsiHigher and harmonicRsiValue[1] > 60
+
+rsiBAMMBuy = showRSIBAMM and hBullishDiv and harmonicRsiCross50Up
+rsiBAMMSell = showRSIBAMM and hBearishDiv and harmonicRsiCross50Down
+
+if rsiBAMMBuy
+    label.new(bar_index, low - atrValueForTrail, "BAMM\nBUY", color=color.lime, textcolor=color.black, style=label.style_label_up, size=size.small)
+
+if rsiBAMMSell and showShortSignals
+    label.new(bar_index, high + atrValueForTrail, "BAMM\nSELL", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// ============================================
+// 정확성 필터 계산 (V42 신규)
+// ============================================
+// 추세 EMA
+harmonicTrendEMA = ta.ema(close, trendEMALen)
+harmonicBullishTrend = close > harmonicTrendEMA and harmonicTrendEMA > harmonicTrendEMA[5]
+harmonicBearishTrend = close < harmonicTrendEMA and harmonicTrendEMA < harmonicTrendEMA[5]
+
+// 거래량 확인
+harmonicVolumeMA = ta.sma(volume, 20)
+harmonicVolumeConfirm = volume > harmonicVolumeMA * harmonicVolumeMultiplier
+
+// RSI 확인
+harmonicRsiConfirmBull = harmonicRsiValue < rsiConfirmLevel
+harmonicRsiConfirmBear = harmonicRsiValue > (100 - rsiConfirmLevel)
+
+// 컨플루언스 점수 (5가지 조건)
+calcHarmonicConfluence(bool isBullish) =>
+    int confScore = 0
+    // 1. 추세 확인
+    confScore += (isBullish and harmonicBullishTrend) or (not isBullish and harmonicBearishTrend) ? 1 : 0
+    // 2. RSI 확인
+    confScore += (isBullish and harmonicRsiConfirmBull) or (not isBullish and harmonicRsiConfirmBear) ? 1 : 0
+    // 3. 거래량 확인
+    confScore += harmonicVolumeConfirm ? 1 : 0
+    // 4. MACD 방향 확인
+    confScore += (isBullish and macdBullish) or (not isBullish and not macdBullish) ? 1 : 0
+    // 5. EMA200 위치 확인
+    confScore += (isBullish and close > ema200) or (not isBullish and close < ema200) ? 1 : 0
+    confScore
+
+harmonicConfluenceBull = calcHarmonicConfluence(true)
+harmonicConfluenceBear = calcHarmonicConfluence(false)
+
+// 필터 통과 여부
+passHarmonicQualityFilter = currentHarmonicQuality >= minQualityScore and (not requirePerfect or currentHarmonicIsPerfect)
+passHarmonicTrendFilter = not useTrendFilter or (currentHarmonicBullish and harmonicBullishTrend) or (not currentHarmonicBullish and harmonicBearishTrend)
+passHarmonicRSIFilter = not useRSIConfirm or (currentHarmonicBullish and harmonicRsiConfirmBull) or (not currentHarmonicBullish and harmonicRsiConfirmBear)
+passHarmonicVolumeFilter = not useHarmonicVolumeFilter or harmonicVolumeConfirm
+passHarmonicConfluenceFilter = not useConfluence or (currentHarmonicBullish ? harmonicConfluenceBull : harmonicConfluenceBear) >= minConfluenceScore
+
+passAllHarmonicFilters = passHarmonicQualityFilter and passHarmonicTrendFilter and passHarmonicRSIFilter and passHarmonicVolumeFilter and passHarmonicConfluenceFilter
+
+// 필터 적용된 하모닉 신호
+filteredHarmonicSignal = detectedHarmonicPattern != "" and passAllHarmonicFilters
+filteredHarmonicBullSignal = filteredHarmonicSignal and harmonicBullish
+filteredHarmonicBearSignal = filteredHarmonicSignal and not harmonicBullish
+
+// ============================================
 // 30점 점수 시스템 (V37 방식)
 // ============================================
 
@@ -982,6 +1354,10 @@ longScore += deltaBullDiv ? 1 : 0  // Delta 강세 다이버전스
 longScore += squeezeBreakoutUp ? 3 : (smartOBVMomentumUp ? 2 : smartOBVAboveCenter ? 1 : 0)
 longScore += smartOBVCrossUp ? 1 : 0  // 매수세 전환 신호
 
+// ★ 하모닉 패턴 점수 (V42 신규) ★
+longScore += filteredHarmonicBullSignal ? 5 : (detectedHarmonicPattern != "" and harmonicBullish ? 3 : 0)
+longScore += rsiBAMMBuy ? 2 : 0
+
 // SHORT 점수용 Delta (참고)
 float shortDeltaScore = strongNegativeDelta and delta3ConsecutiveSell ? 3 : (negativeDelta and cvdDowntrend ? 2 : negativeDelta ? 1 : 0)
 shortDeltaScore += deltaBearDiv ? 1 : 0
@@ -1008,11 +1384,17 @@ bool highConf5 = strongPositiveDelta and cvdUptrend and delta3ConsecutiveBuy and
 // [확신도 6] Delta 다이버전스 + 과매도 = 반전 수급
 bool highConf6 = deltaBullDiv and (rsiOversold or stochOversold) and nearSupport3d
 
+// [확신도 7] 하모닉 패턴 (필터 통과) + 추세 일치 = 고정확 반전
+bool highConf7 = filteredHarmonicBullSignal and tf1h_uptrend and harmonicVolumeConfirm
+
+// [확신도 8] RSI BAMM 매수 + 지지선 = 강력 반전
+bool highConf8 = rsiBAMMBuy and nearSupport3d and volSpike
+
 // 높은 확신도 LONG
-bool highConfidenceLong = highConf1 or highConf2 or highConf3 or highConf4 or highConf5 or highConf6
+bool highConfidenceLong = highConf1 or highConf2 or highConf3 or highConf4 or highConf5 or highConf6 or highConf7 or highConf8
 
 // 확신도 이유
-string confReason = highConf1 ? "HTF+SR+VOL" : highConf2 ? "DIV+OVERSOLD" : highConf3 ? "BB+OVERSOLD" : highConf4 ? "TREND+VOL" : highConf5 ? "DELTA+CVD" : highConf6 ? "DELTA_DIV" : "-"
+string confReason = highConf1 ? "HTF+SR+VOL" : highConf2 ? "DIV+OVERSOLD" : highConf3 ? "BB+OVERSOLD" : highConf4 ? "TREND+VOL" : highConf5 ? "DELTA+CVD" : highConf6 ? "DELTA_DIV" : highConf7 ? "HARMONIC" : highConf8 ? "RSI_BAMM" : "-"
 
 // ============================================
 // 신호 등급 시스템 (30% 강화)
@@ -1398,9 +1780,9 @@ p2 = plot(showIchimoku ? senkouSpanB : na, offset=displacement, color=color.new(
 // 구름 채우기 (양운=초록, 음운=빨강)
 fill(p1, p2, color=senkouSpanA > senkouSpanB ? color.new(color.green, 85) : color.new(color.red, 85), title="Ichimoku Cloud")
 
-// 다이버전스 표시
-plotshape(showDivergence and bullishDivergence, style=shape.labelup, location=location.belowbar, color=color.new(color.green, 20), text="DIV+", textcolor=color.white, size=size.tiny, title="Bullish Div", offset=-pivotRight)
-plotshape(showDivergence and bearishDivergence, style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 20), text="DIV-", textcolor=color.white, size=size.tiny, title="Bearish Div", offset=-pivotRight)
+// 다이버전스 표시 (plot 제한으로 비활성화)
+// plotshape(showDivergence and bullishDivergence, style=shape.labelup, location=location.belowbar, color=color.new(color.green, 20), text="DIV+", textcolor=color.white, size=size.tiny, title="Bullish Div", offset=-pivotRight)
+// plotshape(showDivergence and bearishDivergence, style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 20), text="DIV-", textcolor=color.white, size=size.tiny, title="Bearish Div", offset=-pivotRight)
 
 // ============================================
 // 심리적 구간 시각화
@@ -1508,12 +1890,12 @@ if showPsychLevels and showPOC and barstate.islast
 bgcolor(showPsychLevels and showFearGreed and extremeFear ? color.new(color.green, 85) : na, title="극단적 공포")
 bgcolor(showPsychLevels and showFearGreed and extremeGreed ? color.new(color.red, 85) : na, title="극단적 탐욕")
 
-// 심리적 매수/매도 구간 마커
-plotshape(showPsychLevels and psychBuyZone and not extremeFear, style=shape.diamond, location=location.belowbar, color=color.new(color.teal, 30), size=size.tiny, title="심리적 매수 구간")
-plotshape(showPsychLevels and psychSellZone and not extremeGreed, style=shape.diamond, location=location.abovebar, color=color.new(color.maroon, 30), size=size.tiny, title="심리적 매도 구간")
+// 심리적 매수/매도 구간 마커 (plot 제한으로 비활성화)
+// plotshape(showPsychLevels and psychBuyZone and not extremeFear, style=shape.diamond, location=location.belowbar, color=color.new(color.teal, 30), size=size.tiny, title="심리적 매수 구간")
+// plotshape(showPsychLevels and psychSellZone and not extremeGreed, style=shape.diamond, location=location.abovebar, color=color.new(color.maroon, 30), size=size.tiny, title="심리적 매도 구간")
 
-// 라운드 넘버 근처 알림
-plotshape(showPsychLevels and showRoundNumbers and atRoundNumber, style=shape.circle, location=location.belowbar, color=color.new(color.blue, 50), size=size.tiny, title="라운드 넘버")
+// 라운드 넘버 근처 알림 (plot 제한으로 비활성화)
+// plotshape(showPsychLevels and showRoundNumbers and atRoundNumber, style=shape.circle, location=location.belowbar, color=color.new(color.blue, 50), size=size.tiny, title="라운드 넘버")
 
 // 3일 지지/저항 라인
 var line sup3dLine = na
@@ -1589,13 +1971,13 @@ bgcolor(showSmartOBV and showSmartOBVBg and smartOBVSqueeze ? color.new(color.gr
 bgcolor(showSmartOBV and showSmartOBVBg and not smartOBVSqueeze and smartOBVAboveCenter ? color.new(color.teal, 92) : na, title="스마트OBV 매수세")
 bgcolor(showSmartOBV and showSmartOBVBg and not smartOBVSqueeze and smartOBVBelowCenter ? color.new(color.orange, 92) : na, title="스마트OBV 매도세")
 
-// 스마트 OBV 크로스 신호 표시
-plotshape(showSmartOBV and smartOBVCrossUp and not smartOBVSqueeze, style=shape.circle, location=location.bottom, color=color.teal, size=size.tiny, title="스마트OBV 매수전환")
-plotshape(showSmartOBV and smartOBVCrossDown and not smartOBVSqueeze, style=shape.circle, location=location.bottom, color=color.orange, size=size.tiny, title="스마트OBV 매도전환")
+// 스마트 OBV 크로스 신호 표시 (plot 제한으로 비활성화)
+// plotshape(showSmartOBV and smartOBVCrossUp and not smartOBVSqueeze, style=shape.circle, location=location.bottom, color=color.teal, size=size.tiny, title="스마트OBV 매수전환")
+// plotshape(showSmartOBV and smartOBVCrossDown and not smartOBVSqueeze, style=shape.circle, location=location.bottom, color=color.orange, size=size.tiny, title="스마트OBV 매도전환")
 
-// 스퀴즈 브레이크아웃 신호 (강력)
-plotshape(showSmartOBV and squeezeBreakoutUp, style=shape.diamond, location=location.bottom, color=color.lime, size=size.small, title="스퀴즈 상승돌파")
-plotshape(showSmartOBV and squeezeBreakoutDown, style=shape.diamond, location=location.bottom, color=color.red, size=size.small, title="스퀴즈 하락돌파")
+// 스퀴즈 브레이크아웃 신호 (강력) (plot 제한으로 비활성화)
+// plotshape(showSmartOBV and squeezeBreakoutUp, style=shape.diamond, location=location.bottom, color=color.lime, size=size.small, title="스퀴즈 상승돌파")
+// plotshape(showSmartOBV and squeezeBreakoutDown, style=shape.diamond, location=location.bottom, color=color.red, size=size.small, title="스퀴즈 하락돌파")
 
 // ============================================
 // SMC 시각화
@@ -1721,11 +2103,11 @@ if enableLiqLevels and barstate.islast
             if showLiqLabels
                 array.push(liqLabelsArr, label.new(bar_index + 12, liqShort100x, "S100x🔥", style=label.style_label_left, color=color.new(color.green, 60), textcolor=color.green, size=size.normal))
 
-// 청산 스윕 마커 (대량 청산 후 반전)
-plotshape(enableLiqLevels and longLiq100xSweep, title="100x 롱청산 스윕", location=location.belowbar, color=color.red, style=shape.triangleup, size=size.normal, text="LIQ\nSWEEP")
-plotshape(enableLiqLevels and longLiq50xSweep and not longLiq100xSweep, title="50x 롱청산 스윕", location=location.belowbar, color=color.orange, style=shape.triangleup, size=size.small, text="50x")
-plotshape(enableLiqLevels and shortLiq100xSweep, title="100x 숏청산 스윕", location=location.abovebar, color=color.green, style=shape.triangledown, size=size.normal, text="LIQ\nSWEEP")
-plotshape(enableLiqLevels and shortLiq50xSweep and not shortLiq100xSweep, title="50x 숏청산 스윕", location=location.abovebar, color=color.teal, style=shape.triangledown, size=size.small, text="50x")
+// 청산 스윕 마커 (plot 제한으로 비활성화 - 알람으로 대체)
+// plotshape(enableLiqLevels and longLiq100xSweep, title="100x 롱청산 스윕", location=location.belowbar, color=color.red, style=shape.triangleup, size=size.normal, text="LIQ\nSWEEP")
+// plotshape(enableLiqLevels and longLiq50xSweep and not longLiq100xSweep, title="50x 롱청산 스윕", location=location.belowbar, color=color.orange, style=shape.triangleup, size=size.small, text="50x")
+// plotshape(enableLiqLevels and shortLiq100xSweep, title="100x 숏청산 스윕", location=location.abovebar, color=color.green, style=shape.triangledown, size=size.normal, text="LIQ\nSWEEP")
+// plotshape(enableLiqLevels and shortLiq50xSweep and not shortLiq100xSweep, title="50x 숏청산 스윕", location=location.abovebar, color=color.teal, style=shape.triangledown, size=size.small, text="50x")
 
 // ============================================
 // 실제 청산 매물대 시각화 (Coinglass 기반 고정 레벨)
@@ -1812,14 +2194,14 @@ if realLongLiqSweep1 or realLongLiqSweep2
 if realShortLiqSweep1 or realShortLiqSweep2
     lastRealShortLiqBar := bar_index
 
-// 실제 청산 스윕 마커 (쿨다운 적용됨)
-plotshape(enableRealLiqLevels and realLongLiqSweep1, title="롱 대량청산 스윕", location=location.belowbar, color=#FF5252, style=shape.labelup, size=size.normal, text="💀 LONG LIQ")
-plotshape(enableRealLiqLevels and realShortLiqSweep1, title="숏 대량청산 스윕", location=location.abovebar, color=#4CAF50, style=shape.labeldown, size=size.normal, text="💀 SHORT LIQ")
+// 실제 청산 스윕 마커 (plot 제한으로 비활성화 - 알람으로 대체)
+// plotshape(enableRealLiqLevels and realLongLiqSweep1, title="롱 대량청산 스윕", location=location.belowbar, color=#FF5252, style=shape.labelup, size=size.normal, text="💀 LONG LIQ")
+// plotshape(enableRealLiqLevels and realShortLiqSweep1, title="숏 대량청산 스윕", location=location.abovebar, color=#4CAF50, style=shape.labeldown, size=size.normal, text="💀 SHORT LIQ")
 
-// Premium/Discount Zone 표시
-plot(showSMC ? premiumZone : na, color=color.new(color.red, 70), linewidth=1, style=plot.style_linebr, title="Premium Zone")
-plot(showSMC ? discountZone : na, color=color.new(color.green, 70), linewidth=1, style=plot.style_linebr, title="Discount Zone")
-plot(showSMC ? rangeMid : na, color=color.new(color.gray, 80), linewidth=1, style=plot.style_linebr, title="Range Mid")
+// Premium/Discount Zone 표시 (plot 제한으로 비활성화)
+// plot(showSMC ? premiumZone : na, color=color.new(color.red, 70), linewidth=1, style=plot.style_linebr, title="Premium Zone")
+// plot(showSMC ? discountZone : na, color=color.new(color.green, 70), linewidth=1, style=plot.style_linebr, title="Discount Zone")
+// plot(showSMC ? rangeMid : na, color=color.new(color.gray, 80), linewidth=1, style=plot.style_linebr, title="Range Mid")
 
 // ============================================
 // 시그널 라벨
@@ -2719,38 +3101,38 @@ if enableLiqLevels and shortLiq50xSweep and not shortLiq100xSweep and isFutures
     string liq6 = disclaimer
     alert(liq1 + "\n" + liq2 + "\n" + liq3 + "\n" + liq4 + "\n" + liq5 + "\n" + liq6, freq=alert.freq_once_per_bar_close)
 
-// 청산 구간 접근 알림 (경고)
-if enableLiqLevels and nearLongLiq100x
-    alert("⚠️ " + syminfo.basecurrency + " 100x 롱 청산 구간 접근! $" + str.tostring(close, "#.##") + " → 청산 레벨: $" + str.tostring(liqLong100x, "#.##"), freq=alert.freq_once_per_bar_close)
+// 청산 구간 접근 알림 (비활성화 - 정보성 알림이라 매매에 불필요)
+// if enableLiqLevels and nearLongLiq100x
+//     alert("⚠️ " + syminfo.basecurrency + " 100x 롱 청산 구간 접근! $" + str.tostring(close, "#.##") + " → 청산 레벨: $" + str.tostring(liqLong100x, "#.##"), freq=alert.freq_once_per_bar_close)
 
-if enableLiqLevels and nearShortLiq100x
-    alert("⚠️ " + syminfo.basecurrency + " 100x 숏 청산 구간 접근! $" + str.tostring(close, "#.##") + " → 청산 레벨: $" + str.tostring(liqShort100x, "#.##"), freq=alert.freq_once_per_bar_close)
+// if enableLiqLevels and nearShortLiq100x
+//     alert("⚠️ " + syminfo.basecurrency + " 100x 숏 청산 구간 접근! $" + str.tostring(close, "#.##") + " → 청산 레벨: $" + str.tostring(liqShort100x, "#.##"), freq=alert.freq_once_per_bar_close)
 
 // ============================================
 // 실제 청산 매물대 알림 (대형 포지션 집중 구간)
 // ============================================
 
-// 롱 대량 청산 구간 접근 알림
-if enableRealLiqLevels and nearRealLongLiq1
-    string rliq1 = "🚨 롱 대량 청산 구간 접근! 🚨"
-    string rliq2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
-    string rliq3 = "━━━━━━━━━━━━━━"
-    string rliq4 = "💀 대형 롱 포지션 청산 집중 구간"
-    string rliq5 = "🎯 청산 레벨: $" + str.tostring(realLongLiq1, "#")
-    string rliq6 = "📉 하락 시 연쇄 청산 가능!"
-    string rliq7 = disclaimer
-    alert(rliq1 + "\n" + rliq2 + "\n" + rliq3 + "\n" + rliq4 + "\n" + rliq5 + "\n" + rliq6 + "\n" + rliq7, freq=alert.freq_once_per_bar_close)
+// 롱 대량 청산 구간 접근 알림 (비활성화 - 정보성 알림이라 매매에 불필요)
+// if enableRealLiqLevels and nearRealLongLiq1
+//     string rliq1 = "🚨 롱 대량 청산 구간 접근! 🚨"
+//     string rliq2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+//     string rliq3 = "━━━━━━━━━━━━━━"
+//     string rliq4 = "💀 대형 롱 포지션 청산 집중 구간"
+//     string rliq5 = "🎯 청산 레벨: $" + str.tostring(realLongLiq1, "#")
+//     string rliq6 = "📉 하락 시 연쇄 청산 가능!"
+//     string rliq7 = disclaimer
+//     alert(rliq1 + "\n" + rliq2 + "\n" + rliq3 + "\n" + rliq4 + "\n" + rliq5 + "\n" + rliq6 + "\n" + rliq7, freq=alert.freq_once_per_bar_close)
 
-// 숏 대량 청산 구간 접근 알림
-if enableRealLiqLevels and nearRealShortLiq1
-    string rsiq1 = "🚨 숏 대량 청산 구간 접근! 🚨"
-    string rsiq2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
-    string rsiq3 = "━━━━━━━━━━━━━━"
-    string rsiq4 = "💀 대형 숏 포지션 청산 집중 구간"
-    string rsiq5 = "🎯 청산 레벨: $" + str.tostring(realShortLiq1, "#")
-    string rsiq6 = "📈 상승 시 숏 스퀴즈 가능!"
-    string rsiq7 = disclaimer
-    alert(rsiq1 + "\n" + rsiq2 + "\n" + rsiq3 + "\n" + rsiq4 + "\n" + rsiq5 + "\n" + rsiq6 + "\n" + rsiq7, freq=alert.freq_once_per_bar_close)
+// 숏 대량 청산 구간 접근 알림 (비활성화 - 정보성 알림이라 매매에 불필요)
+// if enableRealLiqLevels and nearRealShortLiq1
+//     string rsiq1 = "🚨 숏 대량 청산 구간 접근! 🚨"
+//     string rsiq2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+//     string rsiq3 = "━━━━━━━━━━━━━━"
+//     string rsiq4 = "💀 대형 숏 포지션 청산 집중 구간"
+//     string rsiq5 = "🎯 청산 레벨: $" + str.tostring(realShortLiq1, "#")
+//     string rsiq6 = "📈 상승 시 숏 스퀴즈 가능!"
+//     string rsiq7 = disclaimer
+//     alert(rsiq1 + "\n" + rsiq2 + "\n" + rsiq3 + "\n" + rsiq4 + "\n" + rsiq5 + "\n" + rsiq6 + "\n" + rsiq7, freq=alert.freq_once_per_bar_close)
 
 // 실제 청산 스윕 알림 (대량 청산 발생 후 반전)
 if enableRealLiqLevels and realLongLiqSweep1
@@ -2816,6 +3198,43 @@ if enableRealLiqLevels and realShortLiqSweep1
 // - 청산 스윕 시 STRONG → SUPER 승격
 // - 청산 구간 접근/스윕 알림
 //
+// V42 Complete (2026.01.27) 하모닉 + 정확성 필터:
+// - 하모닉 패턴 감지 (Gartley, Bat, Crab, Butterfly, Cypher, 707, Shark, AB=CD)
+// - PRZ + TP/SL 자동 계산
+// - RSI BAMM 신호
+// - 정확성 필터 (품질, 추세, 거래량, RSI, 컨플루언스)
+// - 30점 점수 시스템에 하모닉 점수 반영
 // ============================================
+
+// ============================================
+// ★★★ V42 통합 알람 조건 ★★★
+// ============================================
+
+// --- 최고 정확도 알람 (권장) ---
+alertcondition(filteredHarmonicBullSignal or (strongLong and highConfidenceLong) or rsiBAMMBuy, title="[V42] ★ LONG (필터)", message=">>> LONG <<< {{ticker}} {{interval}} - 고정확 매수 신호!")
+alertcondition(filteredHarmonicBearSignal or (showShortSignals and shortDeltaScore >= 3) or rsiBAMMSell, title="[V42] ★ SHORT (필터)", message=">>> SHORT <<< {{ticker}} {{interval}} - 고정확 매도 신호!")
+
+// --- 하모닉 패턴 알람 ---
+alertcondition(filteredHarmonicSignal, title="[V42] 하모닉 (필터)", message="하모닉 패턴! {{ticker}} {{interval}} - 품질/컨플루언스 확인")
+alertcondition(filteredHarmonicBullSignal, title="[V42] Bullish 하모닉", message="Bullish 하모닉! {{ticker}} - PRZ 확인, 매수 검토")
+alertcondition(filteredHarmonicBearSignal, title="[V42] Bearish 하모닉", message="Bearish 하모닉! {{ticker}} - PRZ 확인, 매도 검토")
+alertcondition(detectedHarmonicPattern != "", title="[V42] 하모닉 (원본)", message="하모닉 패턴 감지! {{ticker}} {{interval}}")
+
+// --- RSI BAMM 알람 ---
+alertcondition(rsiBAMMBuy, title="[V42] BAMM 매수", message="RSI BAMM 매수! {{ticker}} - 다이버전스 + RSI 50 돌파")
+alertcondition(rsiBAMMSell, title="[V42] BAMM 매도", message="RSI BAMM 매도! {{ticker}} - 다이버전스 + RSI 50 하향돌파")
+
+// --- ICT/SMC 알람 ---
+alertcondition(strongLong, title="[V42] ICT LONG", message="ICT LONG 신호! {{ticker}} {{interval}} - S/A 등급")
+alertcondition(superLong, title="[V42] SUPER LONG", message="SUPER LONG! {{ticker}} {{interval}} - 모든 조건 일치")
+alertcondition(highConfidenceLong, title="[V42] 고확신 LONG", message="고확신 LONG! {{ticker}} - 높은 승률 조건 충족")
+
+// --- 고래 알람 ---
+alertcondition(whaleBuy, title="[V42] 고래 매수", message="고래 매수! {{ticker}} {{interval}} - 대량 매수세 감지")
+alertcondition(whaleSell, title="[V42] 고래 매도", message="고래 매도! {{ticker}} {{interval}} - 대량 매도세 감지")
+
+// --- 통합 알람 ---
+alertcondition(filteredHarmonicBullSignal or strongLong or rsiBAMMBuy or whaleBuy, title="[V42] 모든 롱", message="롱 신호! {{ticker}} {{interval}}")
+alertcondition(filteredHarmonicBearSignal or (showShortSignals and shortDeltaScore >= 3) or rsiBAMMSell or whaleSell, title="[V42] 모든 숏", message="숏 신호! {{ticker}} {{interval}}")
 
 

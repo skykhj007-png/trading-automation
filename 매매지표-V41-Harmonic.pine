@@ -1,0 +1,817 @@
+//@version=5
+indicator("V41 Harmonic Patterns + ICT Enhanced (2026.01.22)", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=300)
+
+// ============================================
+// V41 Harmonic Patterns + ICT Enhanced
+//
+// 하모닉 패턴 자동 감지 (DK 할모닉 기반)
+// 1. Gartley Pattern (B: 0.588-0.648XA, D: 0.786XA)
+// 2. Deep Gartley (B: 0.588-0.648XA, D: 0.886XA)
+// 3. Bat Pattern (B: 0.382-0.55XA, D: 0.886XA)
+// 4. Alternate Bat (B: 0.352-0.382XA, D: 1.13XA)
+// 5. Crab Pattern (B: 0.382-0.886XA, D: 1.618XA)
+// 6. Deep Crab (B: 0.886-0.936XA, D: 1.618XA)
+// 7. Butterfly (B: 0.756-0.816XA, D: 1.272XA)
+// 8. Shark Pattern (A: 0.382-0.618XA, B: 1.13-1.618AB)
+// 9. Cypher Pattern (B: 0.382-0.618XA, D: 0.786XA)
+// 10. 5-0 Pattern (샤크 후 0.5BC 진입)
+// 11. 영철(707) Pattern (B: 0.677-0.737XA, D: 1.414XA)
+// 12. AB=CD Pattern (기본 하모닉)
+//
+// RSI BAMM (방울뱀) 전략
+// - 다이버전스 + 피보나치 조합
+// - RSI 50 크로스 확인
+//
+// PRZ (Potential Reversal Zone) 시각화
+// - 자동 TP/SL 계산
+// ============================================
+
+// ============================================
+// 기본 설정
+// ============================================
+tradeMode = input.string("현물", title="거래 모드", options=["선물", "현물", "주식"], group="기본 설정")
+displayMode = input.string("최소화", title="화면 모드", options=["전체", "최소화", "테이블만"], group="기본 설정")
+
+bool isFutures = tradeMode == "선물"
+bool showShortSignals = isFutures
+bool isMinimalMode = displayMode == "최소화"
+bool isTableOnlyMode = displayMode == "테이블만"
+bool showVisuals = not isTableOnlyMode
+
+// ============================================
+// 하모닉 패턴 설정
+// ============================================
+showHarmonic = input.bool(true, title="하모닉 패턴 표시", group="하모닉 패턴")
+showHarmonicLabels = input.bool(true, title="패턴 라벨 표시", group="하모닉 패턴")
+showHarmonicLines = input.bool(true, title="패턴 라인 표시", group="하모닉 패턴")
+showPRZ = input.bool(true, title="PRZ 구간 표시", group="하모닉 패턴")
+showTPSL = input.bool(true, title="TP/SL 레벨 표시", group="하모닉 패턴")
+harmonicLookback = input.int(100, title="패턴 탐색 범위", minval=20, maxval=300, group="하모닉 패턴")
+fibTolerance = input.float(3.0, title="피보나치 허용 오차 (%)", minval=1.0, maxval=10.0, step=0.5, group="하모닉 패턴")
+
+// 개별 패턴 ON/OFF
+showGartley = input.bool(true, title="Gartley", inline="pat1", group="하모닉 패턴 선택")
+showBat = input.bool(true, title="Bat", inline="pat1", group="하모닉 패턴 선택")
+showCrab = input.bool(true, title="Crab", inline="pat1", group="하모닉 패턴 선택")
+showButterfly = input.bool(true, title="Butterfly", inline="pat2", group="하모닉 패턴 선택")
+showShark = input.bool(true, title="Shark", inline="pat2", group="하모닉 패턴 선택")
+showCypher = input.bool(true, title="Cypher", inline="pat2", group="하모닉 패턴 선택")
+show50 = input.bool(true, title="5-0", inline="pat3", group="하모닉 패턴 선택")
+show707 = input.bool(true, title="영철(707)", inline="pat3", group="하모닉 패턴 선택")
+showABCD = input.bool(true, title="AB=CD", inline="pat3", group="하모닉 패턴 선택")
+
+// 하모닉 패턴 색상
+bullishColor = input.color(color.new(color.green, 20), title="Bullish 색상", group="하모닉 색상")
+bearishColor = input.color(color.new(color.red, 20), title="Bearish 색상", group="하모닉 색상")
+przColor = input.color(color.new(color.yellow, 70), title="PRZ 구간 색상", group="하모닉 색상")
+tpColor = input.color(color.new(color.lime, 50), title="TP 색상", group="하모닉 색상")
+slColor = input.color(color.new(color.red, 50), title="SL 색상", group="하모닉 색상")
+
+// ============================================
+// RSI BAMM (방울뱀) 설정
+// ============================================
+showRSIBAMM = input.bool(true, title="RSI BAMM 활성화", group="RSI BAMM")
+rsiBAMMLength = input.int(14, title="RSI 길이", minval=5, maxval=30, group="RSI BAMM")
+rsiBAMMOB = input.int(70, title="과매수 기준", minval=60, maxval=90, group="RSI BAMM")
+rsiBAMMOS = input.int(30, title="과매도 기준", minval=10, maxval=40, group="RSI BAMM")
+showRSIDiv = input.bool(true, title="RSI 다이버전스 표시", group="RSI BAMM")
+
+// ============================================
+// 피보나치 비율 상수 (하모닉 패턴용)
+// ============================================
+FIB_236 = 0.236
+FIB_382 = 0.382
+FIB_50 = 0.5
+FIB_618 = 0.618
+FIB_707 = 0.707
+FIB_786 = 0.786
+FIB_886 = 0.886
+FIB_113 = 1.13
+FIB_127 = 1.272
+FIB_141 = 1.414
+FIB_161 = 1.618
+FIB_200 = 2.0
+FIB_224 = 2.24
+FIB_261 = 2.618
+FIB_314 = 3.14
+FIB_361 = 3.618
+
+// ============================================
+// 스윙 고점/저점 탐지
+// ============================================
+swingLen = input.int(5, title="스윙 탐색 길이", minval=2, maxval=20, group="하모닉 패턴")
+
+// 스윙 고점/저점 감지
+pivotHigh = ta.pivothigh(high, swingLen, swingLen)
+pivotLow = ta.pivotlow(low, swingLen, swingLen)
+
+// 스윙 포인트 저장 배열
+var float[] swingHighs = array.new_float(0)
+var float[] swingLows = array.new_float(0)
+var int[] swingHighBars = array.new_int(0)
+var int[] swingLowBars = array.new_int(0)
+
+// 새로운 스윙 고점 저장
+if not na(pivotHigh)
+    array.unshift(swingHighs, pivotHigh)
+    array.unshift(swingHighBars, bar_index - swingLen)
+    if array.size(swingHighs) > 20
+        array.pop(swingHighs)
+        array.pop(swingHighBars)
+
+// 새로운 스윙 저점 저장
+if not na(pivotLow)
+    array.unshift(swingLows, pivotLow)
+    array.unshift(swingLowBars, bar_index - swingLen)
+    if array.size(swingLows) > 20
+        array.pop(swingLows)
+        array.pop(swingLowBars)
+
+// ============================================
+// 피보나치 비율 검증 함수
+// ============================================
+// 비율이 허용 오차 내인지 확인
+isWithinTolerance(float actual, float target, float tolerance) =>
+    actual >= target * (1 - tolerance/100) and actual <= target * (1 + tolerance/100)
+
+// XA 대비 B 지점 비율 계산
+calcXABRatio(float x, float a, float b) =>
+    xa = math.abs(a - x)
+    xb = math.abs(b - x)
+    xa != 0 ? xb / xa : 0
+
+// AB 대비 C 지점 비율 계산
+calcABCRatio(float a, float b, float c) =>
+    ab = math.abs(b - a)
+    bc = math.abs(c - b)
+    ab != 0 ? bc / ab : 0
+
+// XA 대비 D 지점 비율 계산
+calcXADRatio(float x, float a, float d) =>
+    xa = math.abs(a - x)
+    xd = math.abs(d - x)
+    xa != 0 ? xd / xa : 0
+
+// BC 대비 D 지점 프로젝션 계산
+calcBCDProjection(float b, float c, float d) =>
+    bc = math.abs(c - b)
+    cd = math.abs(d - c)
+    bc != 0 ? cd / bc : 0
+
+// ============================================
+// 하모닉 패턴 인식 함수
+// ============================================
+
+// Gartley 패턴 검증 (B: 0.588-0.648XA, D: 0.786XA)
+isGartleyPattern(float x, float a, float b, float c, float d, bool isBullish) =>
+    xabRatio = calcXABRatio(x, a, b)
+    abcRatio = calcABCRatio(a, b, c)
+    xadRatio = calcXADRatio(x, a, d)
+
+    bValid = xabRatio >= 0.588 - fibTolerance/100 and xabRatio <= 0.648 + fibTolerance/100
+    cValid = abcRatio >= 0.382 - fibTolerance/100 and abcRatio <= 0.886 + fibTolerance/100
+    dValid = isWithinTolerance(xadRatio, FIB_786, fibTolerance)
+
+    // C가 A를 넘지 않아야 함
+    cNotBeyondA = isBullish ? c > a : c < a
+
+    bValid and cValid and dValid and not cNotBeyondA
+
+// Deep Gartley 패턴 (B: 0.588-0.648XA, D: 0.886XA)
+isDeepGartleyPattern(float x, float a, float b, float c, float d, bool isBullish) =>
+    xabRatio = calcXABRatio(x, a, b)
+    abcRatio = calcABCRatio(a, b, c)
+    xadRatio = calcXADRatio(x, a, d)
+
+    bValid = xabRatio >= 0.588 - fibTolerance/100 and xabRatio <= 0.648 + fibTolerance/100
+    cValid = abcRatio >= 0.382 - fibTolerance/100 and abcRatio <= 0.886 + fibTolerance/100
+    dValid = isWithinTolerance(xadRatio, FIB_886, fibTolerance)
+
+    cNotBeyondA = isBullish ? c > a : c < a
+
+    bValid and cValid and dValid and not cNotBeyondA
+
+// Bat 패턴 (B: 0.382-0.55XA, D: 0.886XA)
+isBatPattern(float x, float a, float b, float c, float d, bool isBullish) =>
+    xabRatio = calcXABRatio(x, a, b)
+    abcRatio = calcABCRatio(a, b, c)
+    xadRatio = calcXADRatio(x, a, d)
+
+    bValid = xabRatio >= 0.382 - fibTolerance/100 and xabRatio <= 0.55 + fibTolerance/100
+    cValid = abcRatio >= 0.382 - fibTolerance/100 and abcRatio <= 0.886 + fibTolerance/100
+    dValid = isWithinTolerance(xadRatio, FIB_886, fibTolerance)
+
+    cNotBeyondA = isBullish ? c > a : c < a
+
+    bValid and cValid and dValid and not cNotBeyondA
+
+// Alternate Bat 패턴 (B: 0.352-0.382XA, D: 1.13XA)
+isAltBatPattern(float x, float a, float b, float c, float d, bool isBullish) =>
+    xabRatio = calcXABRatio(x, a, b)
+    abcRatio = calcABCRatio(a, b, c)
+    xadRatio = calcXADRatio(x, a, d)
+
+    bValid = xabRatio >= 0.352 - fibTolerance/100 and xabRatio <= 0.382 + fibTolerance/100
+    cValid = abcRatio >= 0.382 - fibTolerance/100 and abcRatio <= 0.886 + fibTolerance/100
+    dValid = isWithinTolerance(xadRatio, FIB_113, fibTolerance)
+
+    cNotBeyondA = isBullish ? c > a : c < a
+
+    bValid and cValid and dValid and not cNotBeyondA
+
+// Crab 패턴 (B: 0.382-0.618XA, D: 1.618XA)
+isCrabPattern(float x, float a, float b, float c, float d, bool isBullish) =>
+    xabRatio = calcXABRatio(x, a, b)
+    abcRatio = calcABCRatio(a, b, c)
+    xadRatio = calcXADRatio(x, a, d)
+
+    bValid = xabRatio >= 0.382 - fibTolerance/100 and xabRatio <= 0.618 + fibTolerance/100
+    cValid = abcRatio >= 0.382 - fibTolerance/100 and abcRatio <= 0.886 + fibTolerance/100
+    dValid = isWithinTolerance(xadRatio, FIB_161, fibTolerance)
+
+    cNotBeyondA = isBullish ? c > a : c < a
+
+    bValid and cValid and dValid and not cNotBeyondA
+
+// Deep Crab 패턴 (B: 0.886-0.936XA, D: 1.618XA)
+isDeepCrabPattern(float x, float a, float b, float c, float d, bool isBullish) =>
+    xabRatio = calcXABRatio(x, a, b)
+    abcRatio = calcABCRatio(a, b, c)
+    xadRatio = calcXADRatio(x, a, d)
+
+    bValid = xabRatio >= 0.886 - fibTolerance/100 and xabRatio <= 0.936 + fibTolerance/100
+    cValid = abcRatio >= 0.382 - fibTolerance/100 and abcRatio <= 0.886 + fibTolerance/100
+    dValid = isWithinTolerance(xadRatio, FIB_161, fibTolerance)
+
+    cNotBeyondA = isBullish ? c > a : c < a
+
+    bValid and cValid and dValid and not cNotBeyondA
+
+// Butterfly 패턴 (B: 0.756-0.816XA, D: 1.272XA)
+isButterflyPattern(float x, float a, float b, float c, float d, bool isBullish) =>
+    xabRatio = calcXABRatio(x, a, b)
+    abcRatio = calcABCRatio(a, b, c)
+    xadRatio = calcXADRatio(x, a, d)
+
+    bValid = xabRatio >= 0.756 - fibTolerance/100 and xabRatio <= 0.816 + fibTolerance/100
+    cValid = abcRatio >= 0.382 - fibTolerance/100 and abcRatio <= 0.886 + fibTolerance/100
+    dValid = isWithinTolerance(xadRatio, FIB_127, fibTolerance)
+
+    cNotBeyondA = isBullish ? c > a : c < a
+
+    bValid and cValid and dValid and not cNotBeyondA
+
+// Cypher 패턴 (B: 0.382-0.618XA, C: 1.13-1.414XA, D: 0.786XC)
+isCypherPattern(float x, float a, float b, float c, float d, bool isBullish) =>
+    xabRatio = calcXABRatio(x, a, b)
+    xacRatio = calcXADRatio(x, a, c)  // C까지의 비율
+    xcRatio = math.abs(d - x) / math.abs(c - x)  // XC 대비 D
+
+    bValid = xabRatio >= 0.382 - fibTolerance/100 and xabRatio <= 0.618 + fibTolerance/100
+    cValid = xacRatio >= 1.13 - fibTolerance/100 and xacRatio <= 1.414 + fibTolerance/100
+    dValid = isWithinTolerance(xcRatio, FIB_786, fibTolerance)
+
+    bValid and cValid and dValid
+
+// 영철(707) 패턴 (B: 0.677-0.737XA, D: 1.414XA)
+is707Pattern(float x, float a, float b, float c, float d, bool isBullish) =>
+    xabRatio = calcXABRatio(x, a, b)
+    abcRatio = calcABCRatio(a, b, c)
+    xadRatio = calcXADRatio(x, a, d)
+
+    bValid = xabRatio >= 0.677 - fibTolerance/100 and xabRatio <= 0.737 + fibTolerance/100
+    cValid = abcRatio >= 0.382 - fibTolerance/100 and abcRatio <= 0.886 + fibTolerance/100
+    dValid = isWithinTolerance(xadRatio, FIB_141, fibTolerance)
+
+    cNotBeyondA = isBullish ? c > a : c < a
+
+    bValid and cValid and dValid and not cNotBeyondA
+
+// AB=CD 패턴 (기본형: AB = CD, 확장형: 1.27/1.618 AB = CD)
+isABCDPattern(float a, float b, float c, float d) =>
+    ab = math.abs(b - a)
+    cd = math.abs(d - c)
+    abcdRatio = cd / ab
+
+    // 1.0, 1.27, 1.618 AB=CD 허용
+    isWithinTolerance(abcdRatio, 1.0, fibTolerance) or isWithinTolerance(abcdRatio, FIB_127, fibTolerance) or isWithinTolerance(abcdRatio, FIB_161, fibTolerance)
+
+// Shark 패턴 (O-X-A-B-C 구조, A: 0.382-0.618OX, B: 1.13-1.618XA, C: 0.886-1.13OB)
+isSharkPattern(float o, float x, float a, float b, float c, bool isBullish) =>
+    ox = math.abs(x - o)
+    xa = math.abs(a - x)
+    ob = math.abs(b - o)
+
+    // A point: 0.382-0.618 OX
+    oaRatio = math.abs(a - o) / ox
+    aValid = oaRatio >= 0.382 - fibTolerance/100 and oaRatio <= 0.618 + fibTolerance/100
+
+    // B point: 1.13-1.618 XA (X를 넘어감)
+    xbRatio = math.abs(b - x) / xa
+    bValid = xbRatio >= 1.13 - fibTolerance/100 and xbRatio <= 1.618 + fibTolerance/100
+
+    // C point (PRZ): 0.886-1.13 OB
+    ocRatio = math.abs(c - o) / ob
+    cValid = ocRatio >= 0.886 - fibTolerance/100 and ocRatio <= 1.13 + fibTolerance/100
+
+    aValid and bValid and cValid
+
+// 5-0 패턴 (Shark 완성 후 BC의 0.5 되돌림에서 진입)
+// BC의 0.5 지점에서 D 형성, C point로 향함
+is50Pattern(float b, float c, float d, bool isBullish) =>
+    bc = math.abs(c - b)
+    bd = math.abs(d - b)
+
+    // D point: 0.5 BC 되돌림
+    bdRatio = bd / bc
+    dValid = isWithinTolerance(bdRatio, 0.5, fibTolerance)
+
+    dValid
+
+// ============================================
+// 패턴 탐지 및 그리기
+// ============================================
+
+// 패턴 정보 저장 변수
+var string currentPattern = ""
+var bool currentIsBullish = false
+var float currentPRZTop = 0.0
+var float currentPRZBottom = 0.0
+var float currentTP1 = 0.0
+var float currentTP2 = 0.0
+var float currentSL = 0.0
+var int currentPatternBar = 0
+var float currentQuality = 0.0
+var bool currentIsPerfect = false
+
+// XABCD 포인트 찾기 (Bullish & Bearish 모두 탐지)
+findXABCDPoints() =>
+    float xPrice = na
+    float aPrice = na
+    float bPrice = na
+    float cPrice = na
+    float dPrice = na
+    int xBar = na
+    int aBar = na
+    int bBar = na
+    int cBar = na
+    int dBar = na
+    bool isBullish = false
+    bool patternFound = false
+
+    // 최소 스윙 포인트 필요
+    if array.size(swingHighs) >= 3 and array.size(swingLows) >= 3
+        // === Bullish 패턴 탐지 (X=저점에서 시작, D=저점에서 끝) ===
+        // 구조: X(저점) -> A(고점) -> B(저점) -> C(고점) -> D(저점, PRZ)
+        if array.size(swingLows) >= 3 and array.size(swingHighs) >= 2
+            float tempX = array.get(swingLows, 2)
+            float tempA = array.get(swingHighs, 1)
+            float tempB = array.get(swingLows, 1)
+            float tempC = array.get(swingHighs, 0)
+            float tempD = array.get(swingLows, 0)
+
+            int tempXBar = array.get(swingLowBars, 2)
+            int tempABar = array.get(swingHighBars, 1)
+            int tempBBar = array.get(swingLowBars, 1)
+            int tempCBar = array.get(swingHighBars, 0)
+            int tempDBar = array.get(swingLowBars, 0)
+
+            // 시간 순서 확인 (X < A < B < C < D)
+            if tempXBar < tempABar and tempABar < tempBBar and tempBBar < tempCBar and tempCBar < tempDBar
+                // 구조적 유효성: A > X, B < A, C > B, D < C
+                if tempA > tempX and tempB < tempA and tempC > tempB and tempD < tempC
+                    xPrice := tempX
+                    aPrice := tempA
+                    bPrice := tempB
+                    cPrice := tempC
+                    dPrice := tempD
+                    xBar := tempXBar
+                    aBar := tempABar
+                    bBar := tempBBar
+                    cBar := tempCBar
+                    dBar := tempDBar
+                    isBullish := true
+                    patternFound := true
+
+        // === Bearish 패턴 탐지 (X=고점에서 시작, D=고점에서 끝) ===
+        // 구조: X(고점) -> A(저점) -> B(고점) -> C(저점) -> D(고점, PRZ)
+        if not patternFound and array.size(swingHighs) >= 3 and array.size(swingLows) >= 2
+            float tempX = array.get(swingHighs, 2)
+            float tempA = array.get(swingLows, 1)
+            float tempB = array.get(swingHighs, 1)
+            float tempC = array.get(swingLows, 0)
+            float tempD = array.get(swingHighs, 0)
+
+            int tempXBar = array.get(swingHighBars, 2)
+            int tempABar = array.get(swingLowBars, 1)
+            int tempBBar = array.get(swingHighBars, 1)
+            int tempCBar = array.get(swingLowBars, 0)
+            int tempDBar = array.get(swingHighBars, 0)
+
+            // 시간 순서 확인
+            if tempXBar < tempABar and tempABar < tempBBar and tempBBar < tempCBar and tempCBar < tempDBar
+                // 구조적 유효성: A < X, B > A, C < B, D > C
+                if tempA < tempX and tempB > tempA and tempC < tempB and tempD > tempC
+                    xPrice := tempX
+                    aPrice := tempA
+                    bPrice := tempB
+                    cPrice := tempC
+                    dPrice := tempD
+                    xBar := tempXBar
+                    aBar := tempABar
+                    bBar := tempBBar
+                    cBar := tempCBar
+                    dBar := tempDBar
+                    isBullish := false
+                    patternFound := true
+
+    [xPrice, aPrice, bPrice, cPrice, dPrice, xBar, aBar, bBar, cBar, dBar, isBullish]
+
+// 패턴 탐지 실행
+[xP, aP, bP, cP, dP, xB, aB, bB, cB, dB, bullish] = findXABCDPoints()
+
+// 패턴 식별
+detectPattern(float x, float a, float b, float c, float d, bool isBullish) =>
+    string patternName = ""
+
+    if not na(x) and not na(a) and not na(b) and not na(c) and not na(d)
+        if showGartley and isGartleyPattern(x, a, b, c, d, isBullish)
+            patternName := "Gartley"
+        else if showGartley and isDeepGartleyPattern(x, a, b, c, d, isBullish)
+            patternName := "Deep Gartley"
+        else if showBat and isBatPattern(x, a, b, c, d, isBullish)
+            patternName := "Bat"
+        else if showBat and isAltBatPattern(x, a, b, c, d, isBullish)
+            patternName := "Alt Bat"
+        else if showCrab and isCrabPattern(x, a, b, c, d, isBullish)
+            patternName := "Crab"
+        else if showCrab and isDeepCrabPattern(x, a, b, c, d, isBullish)
+            patternName := "Deep Crab"
+        else if showButterfly and isButterflyPattern(x, a, b, c, d, isBullish)
+            patternName := "Butterfly"
+        else if showCypher and isCypherPattern(x, a, b, c, d, isBullish)
+            patternName := "Cypher"
+        else if show707 and is707Pattern(x, a, b, c, d, isBullish)
+            patternName := "707"
+        else if showABCD and isABCDPattern(a, b, c, d)
+            patternName := "AB=CD"
+
+    patternName
+
+// ============================================
+// Perfect 패턴 비율 체크 (DK 할모닉 Perfect 비율)
+// Perfect 패턴은 더 정확한 비율을 가짐
+// ============================================
+isPerfectPattern(string patternName, float x, float a, float b, float c, float d, bool isBullish) =>
+    bool isPerfect = false
+    float xabRatio = calcXABRatio(x, a, b)
+    float abcRatio = calcABCRatio(a, b, c)
+    float xadRatio = calcXADRatio(x, a, d)
+    float bcdProj = calcBCDProjection(b, c, d)
+
+    // Perfect 비율 (허용 오차 1%)
+    float perfectTol = 1.0
+
+    if patternName == "Gartley"
+        // Perfect: B=0.618XA, D=0.786XA, BC=1.618
+        isPerfect := isWithinTolerance(xabRatio, 0.618, perfectTol) and isWithinTolerance(xadRatio, 0.786, perfectTol) and isWithinTolerance(bcdProj, 1.618, perfectTol)
+
+    else if patternName == "Bat"
+        // Perfect: B=0.50XA, D=0.886XA, BC=2.0
+        isPerfect := isWithinTolerance(xabRatio, 0.50, perfectTol) and isWithinTolerance(xadRatio, 0.886, perfectTol) and isWithinTolerance(bcdProj, 2.0, perfectTol)
+
+    else if patternName == "Crab"
+        // Perfect: B=0.618XA, D=1.618XA, BC=3.14
+        isPerfect := isWithinTolerance(xabRatio, 0.618, perfectTol) and isWithinTolerance(xadRatio, 1.618, perfectTol) and isWithinTolerance(bcdProj, 3.14, perfectTol)
+
+    else if patternName == "Butterfly"
+        // Perfect: B=0.786XA, D=1.27XA, BC=1.618
+        isPerfect := isWithinTolerance(xabRatio, 0.786, perfectTol) and isWithinTolerance(xadRatio, 1.27, perfectTol) and isWithinTolerance(bcdProj, 1.618, perfectTol)
+
+    isPerfect
+
+// 패턴 품질 점수 계산 (0-100)
+calcPatternQuality(string patternName, float x, float a, float b, float c, float d, bool isBullish) =>
+    float quality = 50.0  // 기본 점수
+
+    float xabRatio = calcXABRatio(x, a, b)
+    float abcRatio = calcABCRatio(a, b, c)
+    float xadRatio = calcXADRatio(x, a, d)
+    float bcdProj = calcBCDProjection(b, c, d)
+
+    // 목표 비율 설정
+    float targetXAB = patternName == "Gartley" ? 0.618 :
+                      patternName == "Bat" ? 0.50 :
+                      patternName == "Crab" ? 0.618 :
+                      patternName == "Butterfly" ? 0.786 :
+                      patternName == "707" ? 0.707 : 0.5
+
+    float targetXAD = patternName == "Gartley" ? 0.786 :
+                      patternName == "Deep Gartley" ? 0.886 :
+                      patternName == "Bat" ? 0.886 :
+                      patternName == "Alt Bat" ? 1.13 :
+                      patternName == "Crab" ? 1.618 :
+                      patternName == "Deep Crab" ? 1.618 :
+                      patternName == "Butterfly" ? 1.27 :
+                      patternName == "707" ? 1.414 : 1.0
+
+    // 비율 정확도 점수 (각 최대 25점)
+    float xabAccuracy = math.max(0, 25 - math.abs(xabRatio - targetXAB) * 100)
+    float xadAccuracy = math.max(0, 25 - math.abs(xadRatio - targetXAD) * 50)
+
+    // AB=CD 점수 (최대 25점)
+    float ab = math.abs(b - a)
+    float cd = math.abs(d - c)
+    float abcdRatio = cd / ab
+    float abcdAccuracy = math.max(0, 25 - math.abs(abcdRatio - 1.0) * 50)
+
+    // Perfect 보너스 (25점)
+    float perfectBonus = isPerfectPattern(patternName, x, a, b, c, d, isBullish) ? 25 : 0
+
+    quality := math.min(100, xabAccuracy + xadAccuracy + abcdAccuracy + perfectBonus)
+    quality
+
+// 패턴 감지
+detectedPattern = detectPattern(xP, aP, bP, cP, dP, bullish)
+
+// ============================================
+// TP/SL 계산 함수 (DK 할모닉 규칙)
+// ============================================
+calcTPSL(string patternName, float a, float d, float x, bool isBullish) =>
+    float tp1 = na
+    float tp2 = na
+    float sl = na
+
+    ad = math.abs(d - a)
+    xa = math.abs(a - x)
+
+    // 기본 TP: 0.382AD, 0.618AD
+    if isBullish
+        tp1 := d + ad * 0.382
+        tp2 := d + ad * 0.618
+    else
+        tp1 := d - ad * 0.382
+        tp2 := d - ad * 0.618
+
+    // SL 계산 (패턴별)
+    if patternName == "Gartley" or patternName == "Deep Gartley"
+        sl := isBullish ? x - xa * 0.0 : x + xa * 0.0  // 1.0XA
+    else if patternName == "Bat"
+        sl := isBullish ? x - xa * 0.13 : x + xa * 0.13  // 1.13XA
+    else if patternName == "Alt Bat"
+        sl := isBullish ? x - xa * 0.27 : x + xa * 0.27  // 1.27XA
+    else if patternName == "Crab" or patternName == "Deep Crab"
+        sl := isBullish ? x - xa * 1.0 : x + xa * 1.0  // 2.0XA
+    else if patternName == "Butterfly"
+        sl := isBullish ? x - xa * 0.414 : x + xa * 0.414  // 1.414XA
+    else if patternName == "707"
+        sl := isBullish ? x - xa * 0.618 : x + xa * 0.618  // 1.618XA
+    else
+        sl := isBullish ? d - ad * 0.5 : d + ad * 0.5  // 기본
+
+    [tp1, tp2, sl]
+
+// ============================================
+// PRZ 계산 (Potential Reversal Zone)
+// ============================================
+calcPRZ(string patternName, float x, float a, float b, float c, bool isBullish) =>
+    float przTop = na
+    float przBottom = na
+
+    xa = math.abs(a - x)
+
+    if patternName == "Gartley"
+        przTop := isBullish ? x + xa * 0.786 : x - xa * 0.786
+        przBottom := isBullish ? x + xa * 0.886 : x - xa * 0.886
+    else if patternName == "Deep Gartley" or patternName == "Bat"
+        przTop := isBullish ? x + xa * 0.886 : x - xa * 0.886
+        przBottom := isBullish ? x + xa * 1.0 : x - xa * 1.0
+    else if patternName == "Alt Bat"
+        przTop := isBullish ? x + xa * 1.13 : x - xa * 1.13
+        przBottom := isBullish ? x + xa * 1.27 : x - xa * 1.27
+    else if patternName == "Crab" or patternName == "Deep Crab"
+        przTop := isBullish ? x + xa * 1.618 : x - xa * 1.618
+        przBottom := isBullish ? x + xa * 2.0 : x - xa * 2.0
+    else if patternName == "Butterfly"
+        przTop := isBullish ? x + xa * 1.272 : x - xa * 1.272
+        przBottom := isBullish ? x + xa * 1.414 : x - xa * 1.414
+    else if patternName == "707"
+        przTop := isBullish ? x + xa * 1.414 : x - xa * 1.414
+        przBottom := isBullish ? x + xa * 1.618 : x - xa * 1.618
+
+    [przTop, przBottom]
+
+// ============================================
+// 패턴 시각화
+// ============================================
+var line lineXA = na
+var line lineAB = na
+var line lineBC = na
+var line lineCD = na
+var line lineXB = na
+var line lineAC = na
+var line lineBD = na
+var label patternLabel = na
+var box przBox = na
+var line tp1Line = na
+var line tp2Line = na
+var line slLine = na
+var label tp1Label = na
+var label tp2Label = na
+var label slLabel = na
+
+// 패턴이 감지되면 그리기
+if showHarmonic and detectedPattern != "" and not na(xB) and not na(dB) and bar_index - dB < 5
+    patternColor = bullish ? bullishColor : bearishColor
+
+    // 기존 라인 삭제
+    line.delete(lineXA)
+    line.delete(lineAB)
+    line.delete(lineBC)
+    line.delete(lineCD)
+    line.delete(lineXB)
+    line.delete(lineBD)
+    label.delete(patternLabel)
+    box.delete(przBox)
+    line.delete(tp1Line)
+    line.delete(tp2Line)
+    line.delete(slLine)
+    label.delete(tp1Label)
+    label.delete(tp2Label)
+    label.delete(slLabel)
+
+    if showHarmonicLines
+        // XABCD 라인 그리기
+        lineXA := line.new(xB, xP, aB, aP, color=patternColor, width=2)
+        lineAB := line.new(aB, aP, bB, bP, color=patternColor, width=2)
+        lineBC := line.new(bB, bP, cB, cP, color=patternColor, width=2)
+        lineCD := line.new(cB, cP, dB, dP, color=patternColor, width=2)
+
+        // 대각선 (X-B, A-C, B-D)
+        lineXB := line.new(xB, xP, bB, bP, color=patternColor, width=1, style=line.style_dotted)
+        lineBD := line.new(bB, bP, dB, dP, color=patternColor, width=1, style=line.style_dotted)
+
+    if showHarmonicLabels
+        // 패턴 라벨
+        labelText = (bullish ? "Bullish " : "Bearish ") + detectedPattern
+        labelY = bullish ? dP - ta.atr(14) * 0.5 : dP + ta.atr(14) * 0.5
+        labelStyle = bullish ? label.style_label_up : label.style_label_down
+        patternLabel := label.new(dB, labelY, labelText, color=patternColor, textcolor=color.white, style=labelStyle, size=size.normal)
+
+    // TP/SL 계산 및 표시
+    [tp1, tp2, sl] = calcTPSL(detectedPattern, aP, dP, xP, bullish)
+
+    // PRZ 계산 및 표시
+    [przT, przB] = calcPRZ(detectedPattern, xP, aP, bP, cP, bullish)
+
+    if showPRZ and not na(przT) and not na(przB)
+        przBox := box.new(dB - 10, math.max(przT, przB), dB + 30, math.min(przT, przB), bgcolor=przColor, border_color=color.yellow, border_width=1)
+
+    if showTPSL and not na(tp1) and not na(sl)
+        // TP/SL 라인
+        tp1Line := line.new(dB, tp1, bar_index + 20, tp1, color=tpColor, width=2, style=line.style_dashed)
+        tp2Line := line.new(dB, tp2, bar_index + 20, tp2, color=tpColor, width=2, style=line.style_dashed)
+        slLine := line.new(dB, sl, bar_index + 20, sl, color=slColor, width=2, style=line.style_dashed)
+
+        // TP/SL 라벨
+        tp1Label := label.new(bar_index + 22, tp1, "TP1: " + str.tostring(tp1, "#.##"), color=color.new(color.green, 80), textcolor=color.lime, style=label.style_label_left, size=size.small)
+        tp2Label := label.new(bar_index + 22, tp2, "TP2: " + str.tostring(tp2, "#.##"), color=color.new(color.green, 80), textcolor=color.lime, style=label.style_label_left, size=size.small)
+        slLabel := label.new(bar_index + 22, sl, "SL: " + str.tostring(sl, "#.##"), color=color.new(color.red, 80), textcolor=color.red, style=label.style_label_left, size=size.small)
+
+    // 패턴 품질 및 Perfect 체크
+    float quality = calcPatternQuality(detectedPattern, xP, aP, bP, cP, dP, bullish)
+    bool isPerfect = isPerfectPattern(detectedPattern, xP, aP, bP, cP, dP, bullish)
+
+    // 현재 패턴 정보 저장
+    currentPattern := detectedPattern
+    currentIsBullish := bullish
+    currentTP1 := tp1
+    currentTP2 := tp2
+    currentSL := sl
+    currentPatternBar := dB
+    currentQuality := quality
+    currentIsPerfect := isPerfect
+
+    // Perfect 패턴 라벨 추가
+    if isPerfect and showHarmonicLabels
+        label.new(dB, bullish ? dP - ta.atr(14) * 1.5 : dP + ta.atr(14) * 1.5, "PERFECT", color=color.new(color.yellow, 0), textcolor=color.black, style=label.style_label_center, size=size.tiny)
+
+// ============================================
+// RSI 계산 (BAMM용)
+// ============================================
+rsiValue = ta.rsi(close, rsiBAMMLength)
+rsiOverbought = rsiValue > rsiBAMMOB
+rsiOversold = rsiValue < rsiBAMMOS
+rsiCross50Up = ta.crossover(rsiValue, 50)
+rsiCross50Down = ta.crossunder(rsiValue, 50)
+
+// RSI 다이버전스 감지
+rsiDivLookback = 14
+priceHigher = high > ta.highest(high, rsiDivLookback)[1]
+priceLower = low < ta.lowest(low, rsiDivLookback)[1]
+rsiHigher = rsiValue > ta.highest(rsiValue, rsiDivLookback)[1]
+rsiLower = rsiValue < ta.lowest(rsiValue, rsiDivLookback)[1]
+
+// Bearish Divergence: 가격 신고점 + RSI 저점
+bearishDiv = priceHigher and not rsiHigher and rsiValue[1] > 60
+// Bullish Divergence: 가격 신저점 + RSI 고점
+bullishDiv = priceLower and not rsiLower and rsiValue[1] < 40
+
+// RSI BAMM 신호
+// 조건 1: 다이버전스 형성
+// 조건 2: RSI가 50을 크로스
+rsiBAMMBuy = showRSIBAMM and bullishDiv and rsiCross50Up
+rsiBAMMSell = showRSIBAMM and bearishDiv and rsiCross50Down
+
+// RSI BAMM 시그널 표시
+if showRSIDiv and bullishDiv
+    label.new(bar_index, low - ta.atr(14), "RSI\nDiv+", color=color.new(color.green, 50), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+if showRSIDiv and bearishDiv
+    label.new(bar_index, high + ta.atr(14), "RSI\nDiv-", color=color.new(color.red, 50), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+if rsiBAMMBuy
+    label.new(bar_index, low - ta.atr(14) * 1.5, "BAMM\nBUY", color=color.lime, textcolor=color.black, style=label.style_label_up, size=size.small)
+
+if rsiBAMMSell and showShortSignals
+    label.new(bar_index, high + ta.atr(14) * 1.5, "BAMM\nSELL", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// ============================================
+// 알람 조건
+// ============================================
+// === 통합 알람 (가장 권장) ===
+alertcondition(detectedPattern != "", title="[통합] 모든 하모닉 패턴", message="하모닉 패턴 감지! {{ticker}} {{interval}}\nD점 PRZ 도달 - 진입 준비\nTP1: 0.382AD, TP2: 0.618AD")
+
+// === 방향별 알람 ===
+alertcondition(detectedPattern != "" and bullish, title="[LONG] Bullish 하모닉", message="Bullish 하모닉! {{ticker}} {{interval}}\n롱 진입 준비 - PRZ 확인")
+alertcondition(detectedPattern != "" and not bullish, title="[SHORT] Bearish 하모닉", message="Bearish 하모닉! {{ticker}} {{interval}}\n숏 진입 준비 - PRZ 확인")
+
+// === RSI BAMM 알람 ===
+alertcondition(rsiBAMMBuy, title="[BAMM] RSI 매수", message="RSI BAMM 매수! {{ticker}} {{interval}}\n다이버전스 + RSI 50 크로스")
+alertcondition(rsiBAMMSell, title="[BAMM] RSI 매도", message="RSI BAMM 매도! {{ticker}} {{interval}}\n다이버전스 + RSI 50 크로스")
+
+// === 복합 신호 (하모닉 + BAMM) ===
+alertcondition((detectedPattern != "" and bullish) or rsiBAMMBuy, title="[복합] 모든 롱 신호", message="롱 신호! {{ticker}} {{interval}}")
+alertcondition((detectedPattern != "" and not bullish) or rsiBAMMSell, title="[복합] 모든 숏 신호", message="숏 신호! {{ticker}} {{interval}}")
+
+// ============================================
+// 정보 테이블
+// ============================================
+showInfoTable = input.bool(true, title="정보 테이블 표시", group="표시 설정")
+tablePosition = input.string("top_right", title="테이블 위치", options=["top_right", "top_left", "bottom_right", "bottom_left"], group="표시 설정")
+
+var table infoTable = table.new(tablePosition == "top_right" ? position.top_right : tablePosition == "top_left" ? position.top_left : tablePosition == "bottom_right" ? position.bottom_right : position.bottom_left, 2, 12, bgcolor=color.new(color.black, 80), border_width=1)
+
+if showInfoTable and barstate.islast
+    table.cell(infoTable, 0, 0, "V41 Harmonic", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 0, "Patterns", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
+
+    // 현재 패턴
+    table.cell(infoTable, 0, 1, "Pattern", text_color=color.gray, text_size=size.tiny)
+    patternText = currentPattern != "" ? currentPattern : "None"
+    patternBgColor = currentPattern != "" ? (currentIsBullish ? color.new(color.green, 70) : color.new(color.red, 70)) : color.new(color.gray, 80)
+    table.cell(infoTable, 1, 1, patternText, bgcolor=patternBgColor, text_color=color.white, text_size=size.tiny)
+
+    // 방향
+    table.cell(infoTable, 0, 2, "Direction", text_color=color.gray, text_size=size.tiny)
+    dirText = currentPattern != "" ? (currentIsBullish ? "BULLISH" : "BEARISH") : "-"
+    table.cell(infoTable, 1, 2, dirText, text_color=currentIsBullish ? color.lime : color.red, text_size=size.tiny)
+
+    // 품질 점수
+    table.cell(infoTable, 0, 3, "Quality", text_color=color.gray, text_size=size.tiny)
+    qualityColor = currentQuality >= 80 ? color.lime : currentQuality >= 60 ? color.yellow : currentQuality >= 40 ? color.orange : color.red
+    qualityText = currentPattern != "" ? str.tostring(currentQuality, "#") + "%" + (currentIsPerfect ? " PERFECT" : "") : "-"
+    table.cell(infoTable, 1, 3, qualityText, text_color=qualityColor, text_size=size.tiny)
+
+    // TP1
+    table.cell(infoTable, 0, 4, "TP1 (0.382AD)", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 4, not na(currentTP1) ? str.tostring(currentTP1, "#.##") : "-", text_color=color.lime, text_size=size.tiny)
+
+    // TP2
+    table.cell(infoTable, 0, 5, "TP2 (0.618AD)", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 5, not na(currentTP2) ? str.tostring(currentTP2, "#.##") : "-", text_color=color.lime, text_size=size.tiny)
+
+    // SL
+    table.cell(infoTable, 0, 6, "SL", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 6, not na(currentSL) ? str.tostring(currentSL, "#.##") : "-", text_color=color.red, text_size=size.tiny)
+
+    // RSI
+    table.cell(infoTable, 0, 7, "RSI", text_color=color.gray, text_size=size.tiny)
+    rsiColor = rsiOverbought ? color.red : rsiOversold ? color.lime : color.white
+    table.cell(infoTable, 1, 7, str.tostring(rsiValue, "#.#"), text_color=rsiColor, text_size=size.tiny)
+
+    // RSI BAMM
+    table.cell(infoTable, 0, 8, "BAMM", text_color=color.gray, text_size=size.tiny)
+    bammText = rsiBAMMBuy ? "BUY" : rsiBAMMSell ? "SELL" : "-"
+    bammColor = rsiBAMMBuy ? color.lime : rsiBAMMSell ? color.red : color.gray
+    table.cell(infoTable, 1, 8, bammText, text_color=bammColor, text_size=size.tiny)
+
+    // 매매 팁
+    table.cell(infoTable, 0, 9, "Tip", text_color=color.gray, text_size=size.tiny)
+    tipText = currentPattern != "" ? "0.382AD 반익절 권장" : "패턴 대기중"
+    table.cell(infoTable, 1, 9, tipText, text_color=color.silver, text_size=size.tiny)
+
+// ============================================
+// 플롯 (숨김 - 알람용)
+// ============================================
+plot(detectedPattern == "Gartley" ? 1 : detectedPattern == "Bat" ? 2 : detectedPattern == "Crab" ? 3 : detectedPattern == "Butterfly" ? 4 : detectedPattern == "Cypher" ? 5 : detectedPattern == "707" ? 6 : 0, title="Pattern ID", display=display.none)
