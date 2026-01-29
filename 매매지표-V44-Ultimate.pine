@@ -1,0 +1,3280 @@
+//@version=5
+indicator("V42 Complete - ICT + Harmonic + 정확성필터 (2026.01.27)", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=300)
+
+// ============================================
+// V42 Complete - 모든 기능 통합 완전판
+//
+// ★★★ V40 ICT 전체 기능 ★★★
+// 1. ICT Killzones (기관 매매 시간대)
+// 2. Liquidity Sweep (유동성 스윕)
+// 3. CVD 정밀도 (Reset + Normalization)
+// 4. 고래 감지 (대량 매수/매도)
+// 5. 30점 점수 시스템
+// 6. 멀티TF 분석 (1H/4H/일봉)
+// 7. 지지/저항 레벨
+// 8. 이치모쿠 구름
+// 9. Smart Trail / BOS / CHoCH
+// 10. Delta / Smart OBV
+//
+// ★★★ V41 하모닉 패턴 ★★★
+// - Gartley, Bat, Crab, Butterfly
+// - Cypher, Shark, 707, AB=CD
+// - PRZ 자동 계산 + TP/SL
+// - RSI BAMM
+//
+// ★★★ 정확성 필터 (신규) ★★★
+// - 품질 점수 필터
+// - 추세/거래량/RSI 확인
+// - 컨플루언스 시스템
+// ============================================
+
+// ============================================
+// 기본 설정
+// ============================================
+
+tradeMode = input.string("현물", title="거래 모드", options=["선물", "현물", "주식"], group="기본 설정", tooltip="현물/주식: SHORT 시그널 숨김")
+displayMode = input.string("최소화", title="화면 모드", options=["전체", "최소화", "테이블만"], group="기본 설정", tooltip="최소화: Smart Trail + 시그널만 표시")
+signalMode = input.string("STRONG 이상", title="시그널 표시", options=["전체", "STRONG 이상", "SUPER만"], group="기본 설정", tooltip="시그널 필터링 수준")
+
+// 거래 모드에 따른 설정
+bool isFutures = tradeMode == "선물"
+bool showShortSignals = isFutures  // 선물만 SHORT 표시
+
+// 화면 모드에 따른 설정
+bool isMinimalMode = displayMode == "최소화"
+bool isTableOnlyMode = displayMode == "테이블만"
+bool showVisuals = not isTableOnlyMode
+
+// ============================================
+// 표시 설정
+// ============================================
+
+showSR = input.bool(true, title="지지/저항 표시", group="표시 설정") and not isMinimalMode and showVisuals
+showHTFTrend = input.bool(true, title="HTF 추세 표시", group="표시 설정")
+showEMA = input.bool(false, title="EMA 표시", group="표시 설정") and not isMinimalMode and showVisuals
+showBB = input.bool(false, title="볼린저밴드 표시", group="표시 설정") and not isMinimalMode and showVisuals
+showDivergence = input.bool(false, title="다이버전스 표시 ⚠️", group="표시 설정", tooltip="⚠️ 차트 마커 비활성화됨 (Pine Script plot 제한 64개 초과). 점수 시스템에는 반영됨. 알람으로 대체 가능.") and not isMinimalMode and showVisuals
+showInfoTable = input.bool(true, title="정보 테이블", group="표시 설정") and not isMinimalMode
+showMiniPanel = input.bool(true, title="미니 패널 (최소화 모드)", group="표시 설정")  // 최소화 모드용 간단 패널
+showSignalLabel = input.bool(false, title="시그널 라벨", group="표시 설정") and not isMinimalMode
+
+volThreshold = input.float(1.5, title="거래량 급증 배수", minval=1.0, maxval=5.0, step=0.1, group="거래량 설정")
+volHighThreshold = input.float(2.5, title="거래량 폭증 배수", minval=1.5, maxval=10.0, step=0.5, group="거래량 설정")
+
+// 피봇 설정
+pivotLeft = input.int(5, title="피봇 좌측 바", minval=2, maxval=20, group="피봇 설정")
+pivotRight = input.int(2, title="피봇 우측 바", minval=1, maxval=10, group="피봇 설정")
+
+// ============================================
+// V40 신규 기능 설정
+// ============================================
+
+// 1. 쿨다운 시스템
+enableCooldown = input.bool(true, title="신호 쿨다운 활성화", group="V40 필터", tooltip="신호 후 N봉 동안 추가 신호 억제")
+cooldownBars = input.int(8, title="쿨다운 바 수", minval=1, maxval=20, group="V40 필터", tooltip="15분봉 기준 8봉 = 2시간 간격")
+dynamicCooldown = input.bool(true, title="동적 쿨다운 (ATR 기반)", group="V40 필터", tooltip="변동성 높으면 쿨다운 단축")
+
+// 2. 볼륨 필터
+enableVolumeFilter = input.bool(true, title="볼륨 필터 활성화", group="V40 필터", tooltip="평균 거래량 이상일 때만 신호")
+volumeAvgLength = input.int(20, title="볼륨 평균 기간", minval=5, maxval=100, group="V40 필터")
+minVolumeRatio = input.float(1.5, title="최소 볼륨 배수", minval=0.5, maxval=3.0, step=0.1, group="V40 필터", tooltip="1.5배 이상 거래량일 때만 신호")
+
+// 3. 시간 필터 (비효율 세션 제외)
+enableTimeFilter = input.bool(true, title="시간 필터 활성화", group="V40 필터", tooltip="아시아-유럽-미국 전환 시간 제외")
+excludeAsiaEU = input.bool(true, title="아시아-유럽 전환 제외 (08:00-10:00 UTC)", group="V40 필터")
+excludeEUUS = input.bool(true, title="유럽-미국 전환 제외 (14:00-16:00 UTC)", group="V40 필터")
+
+// 4. CVD Reset 옵션
+cvdResetMode = input.string("일봉", title="CVD Reset 모드", options=["없음", "일봉", "세션", "주봉"], group="V40 CVD 개선", tooltip="일봉 리셋 권장 - 더 정확한 다이버전스 감지")
+showCVDNormalized = input.bool(true, title="CVD 정규화 표시", group="V40 CVD 개선", tooltip="고가 자산에서 정확한 CVD")
+
+// 5. BOS/CHoCH 개선 필터
+bosVolumeConfirm = input.bool(true, title="BOS 거래량 확인", group="V40 BOS 개선", tooltip="BOS 시 거래량 증가 필수")
+bosMinVolumeRatio = input.float(1.3, title="BOS 최소 거래량 배수", minval=1.0, maxval=3.0, step=0.1, group="V40 BOS 개선")
+bosStrongClose = input.bool(true, title="BOS 강한 종가 확인", group="V40 BOS 개선", tooltip="Swing 넘어 결정적 종가 필요")
+
+// 6. 동적 파라미터
+enableDynamicParams = input.bool(true, title="동적 파라미터 활성화", group="V40 동적 조정", tooltip="ATR 기반 자동 조정")
+atrPeriod = input.int(14, title="ATR 기간", minval=5, maxval=50, group="V40 동적 조정")
+highVolThreshold = input.float(1.5, title="고변동성 임계값", minval=1.0, maxval=3.0, step=0.1, group="V40 동적 조정")
+lowVolThreshold = input.float(0.5, title="저변동성 임계값", minval=0.1, maxval=1.0, step=0.1, group="V40 동적 조정")
+
+// ============================================
+// V40+ ICT Killzones (기관 매매 시간대)
+// ============================================
+enableKillzones = input.bool(true, title="Killzones 필터 활성화", group="V40+ Killzones", tooltip="기관 매매 시간대에만 신호 발생")
+showKillzoneBoxes = input.bool(false, title="Killzone 박스 표시", group="V40+ Killzones", tooltip="차트에 시간대 박스 표시")
+kzLondonOpen = input.bool(true, title="London Open (08:00-10:00 UTC)", group="V40+ Killzones")
+kzNYOpen = input.bool(true, title="NY Open (13:00-15:00 UTC)", group="V40+ Killzones")
+kzLondonClose = input.bool(true, title="London Close (15:00-17:00 UTC)", group="V40+ Killzones")
+kzAsianOpen = input.bool(false, title="Asian Open (00:00-02:00 UTC)", group="V40+ Killzones", tooltip="변동성 낮음 - 선택적")
+
+// ============================================
+// V40+ Liquidity Sweep (유동성 스윕)
+// ============================================
+enableLiqSweep = input.bool(true, title="Liquidity Sweep 활성화", group="V40+ Liquidity", tooltip="스탑로스 사냥 후 반전 감지")
+showLiqSweepLabel = input.bool(true, title="Sweep 라벨 표시", group="V40+ Liquidity")
+liqSweepLookback = input.int(20, title="Sweep 탐색 범위", minval=5, maxval=50, group="V40+ Liquidity")
+liqSweepMinWick = input.float(0.5, title="최소 꼬리 비율 (%)", minval=0.1, maxval=2.0, step=0.1, group="V40+ Liquidity", tooltip="캔들 꼬리가 이 비율 이상이면 Sweep")
+
+// ============================================
+// V40+ 청산 매물대 (Liquidation Levels)
+// ============================================
+enableLiqLevels = input.bool(true, title="청산 레벨 표시 ⚠️", group="V40+ 청산매물대", tooltip="⚠️ 청산 스윕 마커 비활성화됨 (Pine Script plot 제한). 라인/라벨은 정상 표시. 스윕 알람으로 대체 가능.")
+showLongLiq = input.bool(true, title="롱 청산 레벨 (하락 시)", group="V40+ 청산매물대")
+showShortLiq = input.bool(true, title="숏 청산 레벨 (상승 시)", group="V40+ 청산매물대")
+showLiqLabels = input.bool(true, title="청산 라벨 표시", group="V40+ 청산매물대")
+showLiqHighRisk = input.bool(true, title="고위험 구간 강조 (50x+)", group="V40+ 청산매물대")
+liqShow10x = input.bool(true, title="10x 레벨", inline="liqLev1", group="V40+ 청산매물대")
+liqShow25x = input.bool(true, title="25x 레벨", inline="liqLev1", group="V40+ 청산매물대")
+liqShow50x = input.bool(true, title="50x 레벨", inline="liqLev2", group="V40+ 청산매물대")
+liqShow100x = input.bool(true, title="100x 레벨", inline="liqLev2", group="V40+ 청산매물대")
+liqMaintenanceMargin = input.float(0.5, title="유지마진율 (%)", minval=0.1, maxval=2.0, step=0.1, group="V40+ 청산매물대") / 100
+liqSweepBoost = input.bool(true, title="청산 스윕 시 신호 강화", group="V40+ 청산매물대", tooltip="청산 구간 돌파 후 반전 시 STRONG→SUPER 승격")
+
+// ============================================
+// V40+ 실제 청산 매물대 (Coinglass 기반 고정 레벨)
+// ============================================
+enableRealLiqLevels = input.bool(true, title="실제 청산 매물대 표시 ⚠️", group="V40+ 실제 청산매물대", tooltip="⚠️ 스윕 마커 비활성화됨 (Pine Script plot 제한). 라인/라벨은 정상 표시. 스윕 알람으로 대체 가능.")
+showRealLiqLabels = input.bool(true, title="라벨 표시", group="V40+ 실제 청산매물대")
+
+// 롱 청산 집중 구간 (가격 하락 시 대량 청산)
+realLongLiq1Enable = input.bool(true, title="롱청산1 활성화", inline="rl1", group="V40+ 실제 청산매물대")
+realLongLiq1 = input.float(90000, title="가격", inline="rl1", group="V40+ 실제 청산매물대", tooltip="대량 롱 청산 집중 구간")
+realLongLiq1Label = input.string("롱 대량청산", title="라벨", inline="rl1", group="V40+ 실제 청산매물대")
+
+realLongLiq2Enable = input.bool(true, title="롱청산2 활성화", inline="rl2", group="V40+ 실제 청산매물대")
+realLongLiq2 = input.float(93000, title="가격", inline="rl2", group="V40+ 실제 청산매물대", tooltip="롱 청산 지지선")
+realLongLiq2Label = input.string("롱 지지선", title="라벨", inline="rl2", group="V40+ 실제 청산매물대")
+
+realLongLiq3Enable = input.bool(false, title="롱청산3 활성화", inline="rl3", group="V40+ 실제 청산매물대")
+realLongLiq3 = input.float(88000, title="가격", inline="rl3", group="V40+ 실제 청산매물대")
+realLongLiq3Label = input.string("롱 추가", title="라벨", inline="rl3", group="V40+ 실제 청산매물대")
+
+// 숏 청산 집중 구간 (가격 상승 시 대량 청산)
+realShortLiq1Enable = input.bool(true, title="숏청산1 활성화", inline="rs1", group="V40+ 실제 청산매물대")
+realShortLiq1 = input.float(95000, title="가격", inline="rs1", group="V40+ 실제 청산매물대", tooltip="대량 숏 청산 저항 구간")
+realShortLiq1Label = input.string("숏 대량청산", title="라벨", inline="rs1", group="V40+ 실제 청산매물대")
+
+realShortLiq2Enable = input.bool(true, title="숏청산2 활성화", inline="rs2", group="V40+ 실제 청산매물대")
+realShortLiq2 = input.float(100000, title="가격", inline="rs2", group="V40+ 실제 청산매물대", tooltip="심리적 저항 + 숏 청산")
+realShortLiq2Label = input.string("숏 $100K", title="라벨", inline="rs2", group="V40+ 실제 청산매물대")
+
+realShortLiq3Enable = input.bool(false, title="숏청산3 활성화", inline="rs3", group="V40+ 실제 청산매물대")
+realShortLiq3 = input.float(105000, title="가격", inline="rs3", group="V40+ 실제 청산매물대")
+realShortLiq3Label = input.string("숏 추가", title="라벨", inline="rs3", group="V40+ 실제 청산매물대")
+
+// 실제 청산 매물대 색상
+realLongLiqColor = input.color(color.new(#FF5252, 20), title="롱 청산 색상", group="V40+ 실제 청산매물대")
+realShortLiqColor = input.color(color.new(#4CAF50, 20), title="숏 청산 색상", group="V40+ 실제 청산매물대")
+
+// ============================================
+// SMC (Smart Money Concepts) 설정
+// ============================================
+showSMC = input.bool(true, title="SMC 기능 활성화", group="SMC 설정") and showVisuals
+showOrderBlocks = input.bool(false, title="Order Blocks 표시", group="SMC 설정") and not isMinimalMode  // 기본값 OFF (깔끔하게)
+showFVG = input.bool(false, title="Fair Value Gaps 표시", group="SMC 설정")  // 기본값 OFF (깔끔하게)
+showBOS = input.bool(false, title="BOS/CHoCH 표시", group="SMC 설정")  // 기본값 OFF (깔끔하게)
+showBOSBox = input.bool(false, title="BOS 박스 표시", group="SMC 설정")  // 기본값 OFF (깔끔하게)
+showStructureLabels = input.bool(false, title="구조 라벨 (HH/HL/LH/LL)", group="SMC 설정")  // 기본값 OFF (깔끔하게)
+showSmartTrail = input.bool(true, title="Smart Trail 표시", group="SMC 설정")  // 핵심 - 항상 표시
+showLiquidityLevels = input.bool(false, title="Liquidity Levels 표시", group="SMC 설정") and not isMinimalMode  // 기본값 OFF
+showEMAAngle = input.bool(true, title="EMA 각도 색상", group="SMC 설정")  // EMA 각도별 색상
+
+obLookback = input.int(20, title="Order Block 탐색 범위", minval=5, maxval=100, group="SMC 설정")
+fvgMinSize = input.float(0.1, title="FVG 최소 크기 (%)", minval=0.01, maxval=1.0, step=0.01, group="SMC 설정")
+swingLength = input.int(10, title="Swing 탐색 길이", minval=3, maxval=50, group="SMC 설정")
+emaAngleLength = input.int(14, title="EMA 각도 길이", minval=5, maxval=50, group="SMC 설정")
+emaAngleThreshold = input.float(1.0, title="EMA 각도 임계값", minval=0.1, maxval=5.0, step=0.1, group="SMC 설정")
+
+// 고래 감지 설정
+showWhale = input.bool(true, title="고래 매수/매도 표시", group="SMC 설정")
+whaleVolMultiplier = input.float(3.0, title="고래 거래량 배수", minval=2.0, maxval=10.0, step=0.5, group="SMC 설정")
+whalePriceMove = input.float(0.5, title="고래 가격 변동 (%)", minval=0.1, maxval=2.0, step=0.1, group="SMC 설정")
+
+// ============================================
+// 심리적 매매 구간 설정
+// ============================================
+showPsychLevels = input.bool(true, title="심리적 구간 표시", group="심리적 구간", tooltip="⚠️ 플롯 제한(64개)으로 차트 마커(매수/매도 구간 삼각형)는 비활성화됨. 배경색 표시는 정상 작동.")
+showRoundNumbers = input.bool(true, title="라운드 넘버 표시", group="심리적 구간")
+showFearGreed = input.bool(true, title="공포/탐욕 지표", group="심리적 구간")
+showVolProfile = input.bool(true, title="볼륨 집중 구간", group="심리적 구간")
+showFibLevels = input.bool(false, title="피보나치 레벨", group="심리적 구간")
+showKeyLevels = input.bool(true, title="주요 고점/저점 표시", group="심리적 구간")
+showPOC = input.bool(true, title="POC (거래량 집중) 표시", group="심리적 구간")
+roundNumInterval = input.int(5000, title="라운드 넘버 간격 ($)", minval=100, maxval=50000, step=100, group="심리적 구간")
+fibLookback = input.int(100, title="피보나치 탐색 범위", minval=20, maxval=500, group="심리적 구간")
+keyLevelLookback = input.int(50, title="주요 레벨 탐색 범위", minval=20, maxval=200, group="심리적 구간")
+pocLookback = input.int(50, title="POC 탐색 범위", minval=20, maxval=200, group="심리적 구간")
+
+// ============================================
+// 일목균형표 (Ichimoku Cloud) 설정
+// ============================================
+showIchimoku = input.bool(true, title="일목 구름 표시", group="일목균형표")
+ichimokuFilter = input.bool(true, title="일목 구름 필터 활성화", group="일목균형표", tooltip="구름 위=롱만, 구름 아래=숏만")
+tenkanPeriod = input.int(20, title="전환선 기간", minval=1, maxval=50, group="일목균형표", tooltip="암호화폐 24/7 시장: 20 (기존 9)")
+kijunPeriod = input.int(60, title="기준선 기간", minval=1, maxval=100, group="일목균형표", tooltip="암호화폐 24/7 시장: 60 (기존 26)")
+senkouBPeriod = input.int(120, title="선행스팬B 기간", minval=1, maxval=200, group="일목균형표", tooltip="암호화폐 24/7 시장: 120 (기존 52)")
+displacement = input.int(30, title="구름 이동", minval=1, maxval=100, group="일목균형표", tooltip="암호화폐 24/7 시장: 30 (기존 26)")
+
+// ============================================
+// 엘리엇 파동 (Elliott Wave) 설정
+// ============================================
+showElliottWave = input.bool(true, title="엘리엇 파동 활성화", group="엘리엇 파동")
+showEWLabels = input.bool(true, title="파동 레이블 표시", group="엘리엇 파동")
+showEWFib = input.bool(true, title="피보나치 레벨 표시", group="엘리엇 파동")
+showEWZones = input.bool(true, title="매매 구간 표시", group="엘리엇 파동", tooltip="Wave 2 골든존 (61.8~78.6%) 표시")
+ewSwingLength = input.int(10, title="스윙 탐색 길이", minval=5, maxval=50, group="엘리엇 파동")
+ewMinWaves = input.int(5, title="최소 파동 수", minval=3, maxval=10, group="엘리엇 파동")
+ewFibTolerance = input.float(5.0, title="피보나치 허용 오차 (%)", minval=1.0, maxval=20.0, step=1.0, group="엘리엇 파동")
+
+// 엘리엇 파동 색상
+ewImpulseColor = input.color(color.new(color.blue, 0), title="Impulse 색상", group="엘리엇 파동")
+ewCorrectiveColor = input.color(color.new(color.orange, 0), title="Corrective 색상", group="엘리엇 파동")
+ewGoldenZoneColor = input.color(color.new(color.green, 80), title="골든존 색상", group="엘리엇 파동")
+
+// ============================================
+// ★★★ 하모닉 패턴 설정 (V42 신규) ★★★
+// ============================================
+showHarmonic = input.bool(true, title="하모닉 패턴 표시", group="하모닉 패턴")
+showHarmonicLabels = input.bool(true, title="패턴 라벨", group="하모닉 패턴")
+showPRZ = input.bool(true, title="PRZ 구간", group="하모닉 패턴")
+showTPSL = input.bool(true, title="TP/SL 레벨", group="하모닉 패턴")
+harmonicFibTolerance = input.float(5.0, title="피보나치 허용 오차 (%)", minval=1.0, maxval=15.0, group="하모닉 패턴")
+harmonicSwingLen = input.int(10, title="스윙 길이", minval=3, maxval=30, group="하모닉 패턴")
+
+// 개별 패턴 ON/OFF
+showGartley = input.bool(true, title="Gartley", inline="hpat1", group="하모닉 패턴 선택")
+showBat = input.bool(true, title="Bat", inline="hpat1", group="하모닉 패턴 선택")
+showCrab = input.bool(true, title="Crab", inline="hpat1", group="하모닉 패턴 선택")
+showButterfly = input.bool(true, title="Butterfly", inline="hpat2", group="하모닉 패턴 선택")
+showCypher = input.bool(true, title="Cypher", inline="hpat2", group="하모닉 패턴 선택")
+show707 = input.bool(true, title="707", inline="hpat2", group="하모닉 패턴 선택")
+showShark = input.bool(true, title="Shark", inline="hpat3", group="하모닉 패턴 선택")
+showABCD = input.bool(true, title="AB=CD", inline="hpat3", group="하모닉 패턴 선택")
+showDeepGartley = input.bool(true, title="Deep Gartley", inline="hpat4", group="하모닉 패턴 선택")
+showDeepCrab = input.bool(true, title="Deep Crab", inline="hpat4", group="하모닉 패턴 선택")
+showAltBat = input.bool(true, title="Alt Bat", inline="hpat4", group="하모닉 패턴 선택")
+showFiveZero = input.bool(true, title="5-0", inline="hpat5", group="하모닉 패턴 선택")
+
+// RSI BAMM 설정
+showRSIBAMM = input.bool(true, title="RSI BAMM 활성화", group="RSI BAMM")
+rsiBAMMLength = input.int(14, title="RSI 길이", group="RSI BAMM")
+rsiBAMMOB = input.int(70, title="RSI 과매수", group="RSI BAMM")
+rsiBAMMOS = input.int(30, title="RSI 과매도", group="RSI BAMM")
+
+// 하모닉 색상
+harmonicBullColor = input.color(color.new(color.green, 20), title="Bullish", group="하모닉 색상")
+harmonicBearColor = input.color(color.new(color.red, 20), title="Bearish", group="하모닉 색상")
+przColor = input.color(color.new(color.yellow, 70), title="PRZ", group="하모닉 색상")
+
+// ============================================
+// ★★★ 정확성 필터 설정 (V42 신규) ★★★
+// ============================================
+// 품질 필터
+minQualityScore = input.int(60, title="최소 품질 점수 (%)", minval=0, maxval=100, step=10, group="정확성 필터", tooltip="이 점수 이상의 패턴만 신호 발생")
+requirePerfect = input.bool(false, title="Perfect 패턴만", group="정확성 필터", tooltip="Perfect 비율 패턴만 신호 발생")
+
+// RSI 확인 필터
+useRSIConfirm = input.bool(true, title="RSI 확인 필터", group="정확성 필터", tooltip="PRZ에서 RSI 과매수/과매도 확인")
+rsiConfirmLevel = input.int(35, title="RSI 확인 레벨", minval=20, maxval=40, group="정확성 필터")
+
+// 추세 필터
+useTrendFilter = input.bool(true, title="추세 필터", group="정확성 필터", tooltip="EMA 방향과 일치하는 신호만")
+trendEMALen = input.int(55, title="추세 EMA 길이", group="정확성 필터")
+
+// 거래량 필터 (하모닉용)
+useHarmonicVolumeFilter = input.bool(true, title="하모닉 거래량 필터", group="정확성 필터", tooltip="평균 이상 거래량에서만 신호")
+harmonicVolumeMultiplier = input.float(1.2, title="거래량 배수", minval=1.0, maxval=3.0, step=0.1, group="정확성 필터")
+
+// 컨플루언스 (복합 확인)
+useConfluence = input.bool(true, title="컨플루언스 필터", group="정확성 필터", tooltip="여러 조건 충족 시만 신호")
+minConfluenceScore = input.int(3, title="최소 컨플루언스", minval=1, maxval=5, group="정확성 필터")
+
+// ============================================
+// 현재 TF 기본 지표
+// ============================================
+
+// 피보나치 기반 EMA (기관/프로 설정: 8, 21, 55, 200)
+ema8 = ta.ema(close, 8)
+ema21 = ta.ema(close, 21)
+ema55 = ta.ema(close, 55)
+ema200 = ta.ema(close, 200)
+
+bool emaAlignedUp = ema8 > ema21 and ema21 > ema55
+bool emaAlignedDown = ema8 < ema21 and ema21 < ema55
+bool aboveEMA200 = close > ema200
+bool belowEMA200 = close < ema200
+
+// ============================================
+// EMA 각도 분석 (추세 강도) - V40 개선
+// Arctangent 방식 + Normalization
+// ============================================
+emaAngle14 = ta.ema(close, emaAngleLength)
+emaAnglePrev = emaAngle14[emaAngleLength]  // Lookback 거리만큼 이전 값
+
+// V40: Arctangent 방식 각도 계산
+float emaDelta = emaAngle14 - emaAnglePrev
+float emaAngleDegrees = math.atan(emaDelta / emaAngleLength) * 180 / math.pi  // -90° ~ +90°
+
+// V40: 정규화 (가격 범위에 독립적)
+float priceRange = ta.highest(high, 50) - ta.lowest(low, 50)
+float normalizedDelta = priceRange > 0 ? emaDelta / priceRange : 0
+float emaAngleNormalized = math.atan(normalizedDelta * 100) * 180 / math.pi
+
+// 최종 각도 값 (정규화 버전 사용)
+float emaAngleValue = ta.sma(emaAngleNormalized, 3)  // 3봉 평활화
+
+// EMA 색상: 초록(강한상승) > 노랑(약한상승) > 주황(횡보) > 빨강(하락)
+color emaAngleColor = emaAngleValue > emaAngleThreshold ? color.lime :
+                      emaAngleValue > 0 ? color.yellow :
+                      emaAngleValue > -emaAngleThreshold ? color.orange :
+                      color.red
+
+bool emaStrongUp = emaAngleValue > emaAngleThreshold
+bool emaWeakUp = emaAngleValue > 0 and emaAngleValue <= emaAngleThreshold
+bool emaSideways = emaAngleValue <= 0 and emaAngleValue >= -emaAngleThreshold
+bool emaStrongDown = emaAngleValue < -emaAngleThreshold
+
+// ============================================
+// 일목균형표 (Ichimoku Cloud) 계산
+// ============================================
+// 전환선 (Tenkan-sen): 9일 고저 평균
+float tenkanSen = (ta.highest(high, tenkanPeriod) + ta.lowest(low, tenkanPeriod)) / 2
+
+// 기준선 (Kijun-sen): 26일 고저 평균
+float kijunSen = (ta.highest(high, kijunPeriod) + ta.lowest(low, kijunPeriod)) / 2
+
+// 선행스팬A (Senkou Span A): 전환선+기준선 평균, 26일 앞에 표시
+float senkouSpanA = (tenkanSen + kijunSen) / 2
+
+// 선행스팬B (Senkou Span B): 52일 고저 평균, 26일 앞에 표시
+float senkouSpanB = (ta.highest(high, senkouBPeriod) + ta.lowest(low, senkouBPeriod)) / 2
+
+// 현재 구름 상단/하단 (26일 전 값 = 현재 구름)
+float currentCloudTop = math.max(senkouSpanA[displacement], senkouSpanB[displacement])
+float currentCloudBottom = math.min(senkouSpanA[displacement], senkouSpanB[displacement])
+
+// 구름 대비 가격 위치 판단
+bool priceAboveCloud = close > currentCloudTop      // 구름 위 = 강한 상승
+bool priceBelowCloud = close < currentCloudBottom   // 구름 아래 = 강한 하락
+bool priceInCloud = not priceAboveCloud and not priceBelowCloud  // 구름 내부 = 횡보/불확실
+
+// 구름 색상 (양운/음운)
+bool bullishCloud = senkouSpanA > senkouSpanB       // 양운 (초록)
+bool bearishCloud = senkouSpanA < senkouSpanB       // 음운 (빨강)
+
+// 구름 두께 (지지/저항 강도)
+float cloudThickness = math.abs(currentCloudTop - currentCloudBottom)
+float cloudThicknessPercent = cloudThickness / close * 100
+
+// 일목 신호 종합
+string ichimokuSignal = priceAboveCloud ? "구름위" : priceBelowCloud ? "구름아래" : "구름내"
+color ichimokuColor = priceAboveCloud ? color.lime : priceBelowCloud ? color.red : color.yellow
+
+// 볼린저밴드
+bbLength = 20
+bbMult = 2.0
+bbBasis = ta.sma(close, bbLength)
+bbDev = ta.stdev(close, bbLength) * bbMult
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+bool touchBBLower = low <= bbLower
+bool touchBBUpper = high >= bbUpper
+
+rsi = ta.rsi(close, 14)
+stochRsi = ta.stoch(rsi, rsi, rsi, 14)
+stochK = ta.sma(stochRsi, 3)
+stochD = ta.sma(stochK, 3)
+bool rsiOversold = rsi < 30
+bool rsiOverbought = rsi > 70
+bool stochOversold = stochK < 20
+bool stochOverbought = stochK > 80
+bool stochBullish = stochK > stochD
+
+[macdLine, signalLine, histogram] = ta.macd(close, 12, 26, 9)
+bool macdBullish = macdLine > signalLine
+bool macdBearish = macdLine < signalLine
+
+[diPlus, diMinus, adxValue] = ta.dmi(14, 14)
+bool trendStrong = adxValue >= 20
+bool bullishDI = diPlus > diMinus
+
+avgVol = ta.sma(volume, 20)
+volRatio = volume / avgVol
+volSpike = volRatio >= volThreshold
+bool volumeExplosion = volRatio >= volHighThreshold
+
+bullVol = close > open ? volume : volume * (close - low) / math.max(high - low, 0.0001)
+bearVol = close < open ? volume : volume * (high - close) / math.max(high - low, 0.0001)
+buyPressure = bullVol / (bullVol + bearVol) * 100
+bool strongBuyPressure = buyPressure > 55
+bool strongSellPressure = buyPressure < 45
+
+// ============================================
+// 고래 매수/매도 감지
+// ============================================
+float priceChangePercent = math.abs(close - open) / open * 100
+bool isWhaleVolume = volRatio >= whaleVolMultiplier
+bool isWhalePriceMove = priceChangePercent >= whalePriceMove
+bool isBullishCandle = close > open
+bool isBearishCandle = close < open
+
+// 고래 매수: 대량 거래량 + 큰 양봉 + 매수압력
+bool whaleBuy = isWhaleVolume and isWhalePriceMove and isBullishCandle and buyPressure > 55
+
+// 고래 매도: 대량 거래량 + 큰 음봉 + 매도압력
+bool whaleSell = isWhaleVolume and isWhalePriceMove and isBearishCandle and buyPressure < 45
+
+// 거래량 등급별 분류 (해양생물 등급)
+string whaleStrength = volRatio >= 10.0 ? "🐋WHALE" :
+                       volRatio >= 7.0 ? "🦈SHARK" :
+                       volRatio >= 5.0 ? "🐬DOLPHIN" :
+                       volRatio >= 3.0 ? "🐟FISH" :
+                       volRatio >= 2.0 ? "🦀CRAB" : "🦐SHRIMP"
+
+// 등급별 한글명
+string whaleKorean = volRatio >= 10.0 ? "고래" :
+                     volRatio >= 7.0 ? "상어" :
+                     volRatio >= 5.0 ? "돌고래" :
+                     volRatio >= 3.0 ? "물고기" :
+                     volRatio >= 2.0 ? "게" : "새우"
+
+// ============================================
+// Volume Delta & CVD (호가창 대체 분석) - V40 개선
+// Lower TF 데이터 + Reset 기능 + Normalization
+// ============================================
+
+// Volume Delta 설정
+showVolumeDelta = input.bool(true, title="Volume Delta 표시", group="Volume Delta")
+showCVD = input.bool(true, title="CVD 라인 표시", group="Volume Delta")
+deltaLength = input.int(14, title="Delta EMA 길이", minval=5, maxval=50, group="Volume Delta")
+deltaSpikeThreshold = input.float(2.0, title="Delta 급증 배수", minval=1.5, maxval=5.0, step=0.5, group="Volume Delta")
+
+// Volume Delta 계산 (매수 거래량 - 매도 거래량)
+float volumeDelta = bullVol - bearVol
+float absDelta = math.abs(volumeDelta)
+
+// Delta 비율 (전체 거래량 대비)
+float deltaRatio = volume > 0 ? volumeDelta / volume * 100 : 0
+
+// V40: CVD Reset 기능
+var float cvd = 0.0
+bool resetCVD = false
+
+// Reset 조건 체크
+if cvdResetMode == "일봉"
+    resetCVD := ta.change(time("D")) != 0
+else if cvdResetMode == "세션"
+    resetCVD := ta.change(time("D")) != 0  // 세션 시작 (간소화)
+else if cvdResetMode == "주봉"
+    resetCVD := ta.change(time("W")) != 0
+
+// CVD 누적 (Reset 적용)
+cvd := resetCVD ? volumeDelta : cvd + volumeDelta
+
+// V40: CVD Normalization (고가 자산 대응)
+float avgPrice = ta.sma(close, 20)
+float cvdNormalized = showCVDNormalized and avgPrice > 0 ? cvd / avgPrice * 100 : cvd
+float cvdDisplay = showCVDNormalized ? cvdNormalized : cvd
+
+// CVD EMA (추세 파악용)
+float cvdEma = ta.ema(cvdDisplay, deltaLength)
+float cvdSlope = cvdDisplay - cvdDisplay[1]
+bool cvdUptrend = cvdDisplay > cvdEma
+bool cvdDowntrend = cvdDisplay < cvdEma
+
+// Delta 급증 감지
+float avgDelta = ta.sma(absDelta, 20)
+float deltaSpike = absDelta / math.max(avgDelta, 0.0001)
+bool isDeltaSpike = deltaSpike >= deltaSpikeThreshold
+
+// Delta 방향
+bool positiveDelta = volumeDelta > 0
+bool negativeDelta = volumeDelta < 0
+bool strongPositiveDelta = deltaRatio > 30  // 매수 30% 이상 우세
+bool strongNegativeDelta = deltaRatio < -30 // 매도 30% 이상 우세
+
+// Delta 다이버전스 감지
+// 가격 상승 + Delta 하락 = 약세 다이버전스 (매도 신호)
+// 가격 하락 + Delta 상승 = 강세 다이버전스 (매수 신호)
+bool deltaBullDiv = close < close[5] and cvd > cvd[5] and volumeDelta > 0
+bool deltaBearDiv = close > close[5] and cvd < cvd[5] and volumeDelta < 0
+
+// Delta 연속성 (3봉 연속 같은 방향)
+bool delta3ConsecutiveBuy = volumeDelta > 0 and volumeDelta[1] > 0 and volumeDelta[2] > 0
+bool delta3ConsecutiveSell = volumeDelta < 0 and volumeDelta[1] < 0 and volumeDelta[2] < 0
+
+// Delta 기반 매수/매도 압력 등급
+string deltaGrade = strongPositiveDelta and delta3ConsecutiveBuy ? "STRONG BUY" : strongNegativeDelta and delta3ConsecutiveSell ? "STRONG SELL" : positiveDelta and cvdUptrend ? "BUY" : negativeDelta and cvdDowntrend ? "SELL" : "NEUTRAL"
+
+color deltaColor = deltaGrade == "STRONG BUY" ? color.lime : deltaGrade == "BUY" ? color.green : deltaGrade == "STRONG SELL" ? color.fuchsia : deltaGrade == "SELL" ? color.red : color.gray
+
+// ============================================
+// 스마트 OBV (Smart OBV) - 잭 웨이드 전략 (개선)
+// ============================================
+
+// 스마트 OBV 설정
+showSmartOBV = input.bool(true, title="스마트 OBV 활성화", group="스마트 OBV", tooltip="⚠️ 플롯 제한(64개)으로 골든크로스/데드크로스/스퀴즈 마커는 비활성화됨. 배경색 표시는 정상 작동.")
+smartOBVLength = input.int(20, title="중심선 길이", minval=5, maxval=50, group="스마트 OBV")
+smartOBVSqueezeMult = input.float(1.5, title="스퀴즈 BB 배수", minval=1.0, maxval=3.0, step=0.1, group="스마트 OBV", tooltip="BB 폭이 이 배수 이하면 스퀴즈")
+showSmartOBVBg = input.bool(true, title="배경색 표시", group="스마트 OBV")
+
+// 스마트 OBV 계산 (가격 변동 강도 가중치 적용)
+// 기존 OBV: 양봉이면 +volume, 음봉이면 -volume (단순)
+// 스마트 OBV: (현재종가 - 이전종가) / ATR * volume (ATR 표준화 가중치)
+float priceChangePrev = close - close[1]  // 이전 종가 대비 변동
+float atrNorm = ta.atr(14)  // ATR로 표준화
+float normalizedChange = atrNorm != 0 ? priceChangePrev / atrNorm : 0  // -1 ~ +1 범위로 정규화
+float weightedVolume = normalizedChange * volume / 1000000  // 스케일 조정 (백만 단위)
+
+// 스마트 OBV 누적
+var float smartOBV = 0.0
+smartOBV := smartOBV + weightedVolume
+
+// 중심선 (N일 EMA) - 매수/매도세 판단 기준
+float smartOBVCenter = ta.ema(smartOBV, smartOBVLength)
+
+// 스마트 OBV 상태
+bool smartOBVAboveCenter = smartOBV > smartOBVCenter  // 매수세 우세
+bool smartOBVBelowCenter = smartOBV < smartOBVCenter  // 매도세 우세
+
+// 중심선 크로스 신호
+bool smartOBVCrossUp = ta.crossover(smartOBV, smartOBVCenter)   // 매수세 전환
+bool smartOBVCrossDown = ta.crossunder(smartOBV, smartOBVCenter) // 매도세 전환
+
+// 스퀴즈 모멘텀 감지 (볼린저 밴드 폭 기반 - 더 정확)
+// BB 폭이 좁으면 에너지 응축, 넓어지면 브레이크아웃
+float smartOBVBBUpper = ta.sma(smartOBV, smartOBVLength) + ta.stdev(smartOBV, smartOBVLength) * 2
+float smartOBVBBLower = ta.sma(smartOBV, smartOBVLength) - ta.stdev(smartOBV, smartOBVLength) * 2
+float smartOBVBBWidth = smartOBVBBUpper - smartOBVBBLower
+float smartOBVBBWidthAvg = ta.sma(smartOBVBBWidth, smartOBVLength)
+bool smartOBVSqueeze = smartOBVBBWidth < smartOBVBBWidthAvg / smartOBVSqueezeMult  // BB 폭이 평균의 1/1.5 이하면 스퀴즈
+
+// 스퀴즈 후 브레이크아웃 감지 (BB 돌파 + 방향)
+bool squeezeBBBreakUp = smartOBV > smartOBVBBUpper and smartOBVSqueeze[1]  // 상단 돌파
+bool squeezeBBBreakDown = smartOBV < smartOBVBBLower and smartOBVSqueeze[1]  // 하단 돌파
+bool squeezeBreakoutUp = (smartOBVSqueeze[1] and not smartOBVSqueeze and smartOBVAboveCenter) or squeezeBBBreakUp
+bool squeezeBreakoutDown = (smartOBVSqueeze[1] and not smartOBVSqueeze and smartOBVBelowCenter) or squeezeBBBreakDown
+
+// 스마트 OBV 기울기 (모멘텀) - 3봉 대비 변화율
+float smartOBVSlope = smartOBV - smartOBV[3]
+float smartOBVSlopeNorm = smartOBVBBWidthAvg != 0 ? smartOBVSlope / smartOBVBBWidthAvg * 100 : 0  // 정규화된 기울기
+bool smartOBVMomentumUp = smartOBVSlope > 0 and smartOBVAboveCenter
+bool smartOBVMomentumDown = smartOBVSlope < 0 and smartOBVBelowCenter
+
+// 강한 모멘텀 감지 (기울기가 크면)
+bool smartOBVStrongMomentumUp = smartOBVSlopeNorm > 30 and smartOBVAboveCenter
+bool smartOBVStrongMomentumDown = smartOBVSlopeNorm < -30 and smartOBVBelowCenter
+
+// 스마트 OBV 등급
+string smartOBVGrade = squeezeBreakoutUp and smartOBVStrongMomentumUp ? "STRONG BUY" :
+                       squeezeBreakoutDown and smartOBVStrongMomentumDown ? "STRONG SELL" :
+                       smartOBVMomentumUp and smartOBVAboveCenter ? "BUY" :
+                       smartOBVMomentumDown and smartOBVBelowCenter ? "SELL" :
+                       smartOBVSqueeze ? "SQUEEZE" : "NEUTRAL"
+
+// 피봇/다이버전스
+float pivotHigh = ta.pivothigh(high, pivotLeft, pivotRight)
+float pivotLow = ta.pivotlow(low, pivotLeft, pivotRight)
+float rsiPivotLow = ta.pivotlow(rsi, pivotLeft, pivotRight)
+float rsiPivotHigh = ta.pivothigh(rsi, pivotLeft, pivotRight)
+float pricePivotLow = ta.pivotlow(low, pivotLeft, pivotRight)
+float pricePivotHigh = ta.pivothigh(high, pivotLeft, pivotRight)
+
+var float prevRsiLow = na
+var float prevPriceLow = na
+var float prevRsiHigh = na
+var float prevPriceHigh = na
+
+bool bullishDivergence = false
+if not na(rsiPivotLow) and not na(pricePivotLow)
+    if not na(prevRsiLow) and not na(prevPriceLow)
+        if pricePivotLow < prevPriceLow and rsiPivotLow > prevRsiLow
+            bullishDivergence := true
+    prevRsiLow := rsiPivotLow
+    prevPriceLow := pricePivotLow
+
+bool bearishDivergence = false
+if not na(rsiPivotHigh) and not na(pricePivotHigh)
+    if not na(prevRsiHigh) and not na(prevPriceHigh)
+        if pricePivotHigh > prevPriceHigh and rsiPivotHigh < prevRsiHigh
+            bearishDivergence := true
+    prevRsiHigh := rsiPivotHigh
+    prevPriceHigh := pricePivotHigh
+
+// ============================================
+// SMC (Smart Money Concepts) 계산
+// ============================================
+
+// --- Swing High/Low 감지 ---
+float swingHigh = ta.pivothigh(high, swingLength, swingLength)
+float swingLow = ta.pivotlow(low, swingLength, swingLength)
+
+// 최근 스윙 포인트 저장
+var float lastSwingHigh = na
+var float lastSwingLow = na
+var int lastSwingHighBar = na
+var int lastSwingLowBar = na
+var float prevSwingHigh = na
+var float prevSwingLow = na
+var int prevSwingHighBar = na
+var int prevSwingLowBar = na
+
+// 시장 구조 라벨용 변수
+var string lastStructureType = "none"
+
+if not na(swingHigh)
+    prevSwingHigh := lastSwingHigh
+    prevSwingHighBar := lastSwingHighBar
+    lastSwingHigh := swingHigh
+    lastSwingHighBar := bar_index - swingLength
+
+if not na(swingLow)
+    prevSwingLow := lastSwingLow
+    prevSwingLowBar := lastSwingLowBar
+    lastSwingLow := swingLow
+    lastSwingLowBar := bar_index - swingLength
+
+// --- 시장 구조 분석 (HH, HL, LH, LL) ---
+bool isHigherHigh = not na(swingHigh) and not na(prevSwingHigh) and swingHigh > prevSwingHigh
+bool isLowerHigh = not na(swingHigh) and not na(prevSwingHigh) and swingHigh < prevSwingHigh
+bool isHigherLow = not na(swingLow) and not na(prevSwingLow) and swingLow > prevSwingLow
+bool isLowerLow = not na(swingLow) and not na(prevSwingLow) and swingLow < prevSwingLow
+
+// 구조 라벨 표시
+if showSMC and showStructureLabels
+    if isHigherHigh
+        label.new(bar_index - swingLength, swingHigh, "HH",
+                 style=label.style_label_down, color=color.new(color.green, 40),
+                 textcolor=color.white, size=size.tiny)
+        lastStructureType := "HH"
+
+    if isLowerHigh
+        label.new(bar_index - swingLength, swingHigh, "LH",
+                 style=label.style_label_down, color=color.new(color.red, 40),
+                 textcolor=color.white, size=size.tiny)
+        lastStructureType := "LH"
+
+    if isHigherLow
+        label.new(bar_index - swingLength, swingLow, "HL",
+                 style=label.style_label_up, color=color.new(color.green, 40),
+                 textcolor=color.white, size=size.tiny)
+        lastStructureType := "HL"
+
+    if isLowerLow
+        label.new(bar_index - swingLength, swingLow, "LL",
+                 style=label.style_label_up, color=color.new(color.red, 40),
+                 textcolor=color.white, size=size.tiny)
+        lastStructureType := "LL"
+
+// --- BOS (Break of Structure) / CHoCH (Change of Character) - V40 개선 ---
+var bool isBullishStructure = true
+var float bosLevel = na
+var float chochLevel = na
+var float lastBosHigh = na
+var float lastBosLow = na
+bool bosUp = false
+bool bosDn = false
+bool chochUp = false
+bool chochDn = false
+
+// V40: BOS 확인 조건
+bool bosVolumeOK = not bosVolumeConfirm or volRatio >= bosMinVolumeRatio  // 거래량 확인
+strongCloseAbove(float level) => close > level and close > open  // 강한 양봉 종가
+strongCloseBelow(float level) => close < level and close < open  // 강한 음봉 종가
+
+// BOS: 추세 방향으로의 구조 돌파 (처음 돌파 시에만)
+// CHoCH: 추세 반대 방향으로의 구조 돌파 (추세 전환)
+if isBullishStructure
+    // CHoCH: 상승 구조에서 저점 이탈 = 하락 전환
+    // V40: 강한 종가 + 거래량 확인
+    bool chochCondition = not na(lastSwingLow) and close < lastSwingLow and close[1] >= lastSwingLow
+    bool chochConfirmed = bosStrongClose ? strongCloseBelow(lastSwingLow) and bosVolumeOK : chochCondition and bosVolumeOK
+
+    if chochConfirmed
+        chochDn := true
+        chochLevel := lastSwingLow
+        isBullishStructure := false
+        lastBosLow := lastSwingLow
+
+    // BOS: 상승 구조에서 고점 돌파 (처음 돌파할 때만)
+    // V40: 강한 종가 + 거래량 확인
+    bool bosCondition = not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh and (na(lastBosHigh) or lastSwingHigh != lastBosHigh)
+    bool bosConfirmed = bosStrongClose ? strongCloseAbove(lastSwingHigh) and bosVolumeOK : bosCondition and bosVolumeOK
+
+    if bosConfirmed
+        bosUp := true
+        bosLevel := lastSwingHigh
+        lastBosHigh := lastSwingHigh
+else
+    // CHoCH: 하락 구조에서 고점 돌파 = 상승 전환
+    // V40: 강한 종가 + 거래량 확인
+    bool chochCondition = not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh
+    bool chochConfirmed = bosStrongClose ? strongCloseAbove(lastSwingHigh) and bosVolumeOK : chochCondition and bosVolumeOK
+
+    if chochConfirmed
+        chochUp := true
+        chochLevel := lastSwingHigh
+        isBullishStructure := true
+        lastBosHigh := lastSwingHigh
+
+    // BOS: 하락 구조에서 저점 이탈 (처음 이탈할 때만)
+    // V40: 강한 종가 + 거래량 확인
+    bool bosCondition = not na(lastSwingLow) and close < lastSwingLow and close[1] >= lastSwingLow and (na(lastBosLow) or lastSwingLow != lastBosLow)
+    bool bosConfirmed = bosStrongClose ? strongCloseBelow(lastSwingLow) and bosVolumeOK : bosCondition and bosVolumeOK
+
+    if bosConfirmed
+        bosDn := true
+        bosLevel := lastSwingLow
+        lastBosLow := lastSwingLow
+
+// --- BOS 박스 생성 ---
+var box[] bosBoxes = array.new_box(0)
+
+// Bullish BOS 박스 (청록색) - EMA 상승 중 + 고점 돌파
+if showSMC and showBOSBox and bosUp and emaAngleValue > 0
+    if array.size(bosBoxes) >= 10
+        box.delete(array.shift(bosBoxes))
+    // 이전 저점 ~ 현재 고점 박스
+    float boxTop = lastSwingHigh
+    float boxBot = not na(prevSwingLow) ? prevSwingLow : lastSwingLow
+    array.push(bosBoxes, box.new(lastSwingHighBar, boxTop, bar_index + 15, boxBot,
+               bgcolor=color.new(color.teal, 85), border_color=color.teal, border_width=2,
+               text="BOS+", text_color=color.teal, text_size=size.small))
+
+// Bearish BOS 박스 (분홍색) - EMA 하락 중 + 저점 이탈
+if showSMC and showBOSBox and bosDn and emaAngleValue < 0
+    if array.size(bosBoxes) >= 10
+        box.delete(array.shift(bosBoxes))
+    // 이전 고점 ~ 현재 저점 박스
+    float boxTop = not na(prevSwingHigh) ? prevSwingHigh : lastSwingHigh
+    float boxBot = lastSwingLow
+    array.push(bosBoxes, box.new(lastSwingLowBar, boxTop, bar_index + 15, boxBot,
+               bgcolor=color.new(color.fuchsia, 85), border_color=color.fuchsia, border_width=2,
+               text="BOS-", text_color=color.fuchsia, text_size=size.small))
+
+// --- Order Blocks 감지 ---
+var box[] bullishOBs = array.new_box(0)
+var box[] bearishOBs = array.new_box(0)
+
+// Bullish Order Block: 하락 후 강한 상승 전 마지막 하락 캔들
+bool isBullishOB = close[1] < open[1] and close > open and close > high[1] and volRatio >= 1.2
+float bullOBTop = isBullishOB ? high[1] : na
+float bullOBBot = isBullishOB ? low[1] : na
+
+// Bearish Order Block: 상승 후 강한 하락 전 마지막 상승 캔들
+bool isBearishOB = close[1] > open[1] and close < open and close < low[1] and volRatio >= 1.2
+float bearOBTop = isBearishOB ? high[1] : na
+float bearOBBot = isBearishOB ? low[1] : na
+
+// Order Block 박스 생성
+if showSMC and showOrderBlocks and isBullishOB
+    if array.size(bullishOBs) >= 5
+        box.delete(array.shift(bullishOBs))
+    array.push(bullishOBs, box.new(bar_index - 1, bullOBTop, bar_index + 20, bullOBBot, bgcolor=color.new(color.green, 85), border_color=color.green, border_width=1))
+
+if showSMC and showOrderBlocks and isBearishOB
+    if array.size(bearishOBs) >= 5
+        box.delete(array.shift(bearishOBs))
+    array.push(bearishOBs, box.new(bar_index - 1, bearOBTop, bar_index + 20, bearOBBot, bgcolor=color.new(color.red, 85), border_color=color.red, border_width=1))
+
+// --- Fair Value Gap (FVG) 감지 ---
+var box[] bullishFVGs = array.new_box(0)
+var box[] bearishFVGs = array.new_box(0)
+
+// Bullish FVG: 현재봉 저가 > 2봉전 고가 (갭 상승)
+float fvgThreshold = close * fvgMinSize / 100
+bool isBullishFVG = low > high[2] and (low - high[2]) >= fvgThreshold
+float bullFVGTop = isBullishFVG ? low : na
+float bullFVGBot = isBullishFVG ? high[2] : na
+
+// Bearish FVG: 현재봉 고가 < 2봉전 저가 (갭 하락)
+bool isBearishFVG = high < low[2] and (low[2] - high) >= fvgThreshold
+float bearFVGTop = isBearishFVG ? low[2] : na
+float bearFVGBot = isBearishFVG ? high : na
+
+// FVG 박스 생성
+if showSMC and showFVG and isBullishFVG
+    if array.size(bullishFVGs) >= 5
+        box.delete(array.shift(bullishFVGs))
+    array.push(bullishFVGs, box.new(bar_index - 2, bullFVGTop, bar_index + 15, bullFVGBot, bgcolor=color.new(color.teal, 80), border_color=color.teal, border_width=1, border_style=line.style_dashed))
+
+if showSMC and showFVG and isBearishFVG
+    if array.size(bearishFVGs) >= 5
+        box.delete(array.shift(bearishFVGs))
+    array.push(bearishFVGs, box.new(bar_index - 2, bearFVGTop, bar_index + 15, bearFVGBot, bgcolor=color.new(color.maroon, 80), border_color=color.maroon, border_width=1, border_style=line.style_dashed))
+
+// --- Smart Trail (트레일링 스탑) ---
+// atrPeriod는 V40 설정에서 정의됨
+atrMult = 2.0
+float atrValueForTrail = ta.atr(atrPeriod)
+
+var float smartTrail = na
+var bool smartTrailUp = true
+
+if smartTrailUp
+    smartTrail := math.max(nz(smartTrail), close - atrValueForTrail * atrMult)
+    if close < smartTrail
+        smartTrailUp := false
+        smartTrail := close + atrValueForTrail * atrMult
+else
+    smartTrail := math.min(nz(smartTrail), close + atrValueForTrail * atrMult)
+    if close > smartTrail
+        smartTrailUp := true
+        smartTrail := close - atrValueForTrail * atrMult
+
+// --- Liquidity Levels (Equal Highs/Lows) ---
+var float[] eqHighs = array.new_float(0)
+var float[] eqLows = array.new_float(0)
+var int[] eqHighBars = array.new_int(0)
+var int[] eqLowBars = array.new_int(0)
+
+// Equal Highs 감지 (비슷한 고점 = 유동성 타겟)
+eqHighThreshold = atrValueForTrail * 0.3
+if not na(swingHigh) and not na(prevSwingHigh)
+    if math.abs(swingHigh - prevSwingHigh) < eqHighThreshold
+        if array.size(eqHighs) >= 3
+            array.shift(eqHighs)
+            array.shift(eqHighBars)
+        array.push(eqHighs, (swingHigh + prevSwingHigh) / 2)
+        array.push(eqHighBars, bar_index - swingLength)
+
+// Equal Lows 감지 (비슷한 저점 = 유동성 타겟)
+if not na(swingLow) and not na(prevSwingLow)
+    if math.abs(swingLow - prevSwingLow) < eqHighThreshold
+        if array.size(eqLows) >= 3
+            array.shift(eqLows)
+            array.shift(eqLowBars)
+        array.push(eqLows, (swingLow + prevSwingLow) / 2)
+        array.push(eqLowBars, bar_index - swingLength)
+
+// --- Premium/Discount Zone ---
+float rangeHigh = ta.highest(high, 50)
+float rangeLow = ta.lowest(low, 50)
+float rangeMid = (rangeHigh + rangeLow) / 2
+float premiumZone = rangeMid + (rangeHigh - rangeMid) * 0.5
+float discountZone = rangeMid - (rangeMid - rangeLow) * 0.5
+bool inPremium = close > premiumZone
+bool inDiscount = close < discountZone
+
+// SMC 시그널 조합
+bool smcBullish = (isBullishOB or isBullishFVG or chochUp) and inDiscount and smartTrailUp
+bool smcBearish = (isBearishOB or isBearishFVG or chochDn) and inPremium and not smartTrailUp
+
+// ============================================
+// 15분봉 분석 (5분봉 제거 - security 제한 40개)
+// ============================================
+
+tf15m_ema8 = request.security(syminfo.tickerid, "15", ta.ema(close, 8), lookahead=barmerge.lookahead_off)
+tf15m_ema21 = request.security(syminfo.tickerid, "15", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+tf15m_close = request.security(syminfo.tickerid, "15", close, lookahead=barmerge.lookahead_off)
+tf15m_rsi = request.security(syminfo.tickerid, "15", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
+tf15m_vol = request.security(syminfo.tickerid, "15", volume, lookahead=barmerge.lookahead_off)
+tf15m_avgVol = request.security(syminfo.tickerid, "15", ta.sma(volume, 20), lookahead=barmerge.lookahead_off)
+
+float tf15m_volRatio = tf15m_vol / math.max(tf15m_avgVol, 1)
+bool tf15m_uptrend = tf15m_ema8 > tf15m_ema21 and tf15m_close > tf15m_ema21
+bool tf15m_downtrend = tf15m_ema8 < tf15m_ema21 and tf15m_close < tf15m_ema21
+bool tf15m_volSpike = tf15m_volRatio >= volThreshold
+bool tf15m_oversold = tf15m_rsi < 35
+// 추세 강도
+tf15m_ema55 = request.security(syminfo.tickerid, "15", ta.ema(close, 55), lookahead=barmerge.lookahead_off)
+bool tf15m_emaAligned = tf15m_ema8 > tf15m_ema21 and tf15m_ema21 > tf15m_ema55
+bool tf15m_emaAlignedDn = tf15m_ema8 < tf15m_ema21 and tf15m_ema21 < tf15m_ema55
+tf15m_macd = request.security(syminfo.tickerid, "15", ta.ema(close, 12) - ta.ema(close, 26), lookahead=barmerge.lookahead_off)
+tf15m_macdSig = request.security(syminfo.tickerid, "15", ta.ema(ta.ema(close, 12) - ta.ema(close, 26), 9), lookahead=barmerge.lookahead_off)
+bool tf15m_macdBull = tf15m_macd > tf15m_macdSig
+
+// ============================================
+// 1시간봉 분석
+// ============================================
+
+tf1h_ema8 = request.security(syminfo.tickerid, "60", ta.ema(close, 8), lookahead=barmerge.lookahead_off)
+tf1h_ema21 = request.security(syminfo.tickerid, "60", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+tf1h_ema55 = request.security(syminfo.tickerid, "60", ta.ema(close, 55), lookahead=barmerge.lookahead_off)
+tf1h_close = request.security(syminfo.tickerid, "60", close, lookahead=barmerge.lookahead_off)
+tf1h_rsi = request.security(syminfo.tickerid, "60", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
+tf1h_vol = request.security(syminfo.tickerid, "60", volume, lookahead=barmerge.lookahead_off)
+tf1h_avgVol = request.security(syminfo.tickerid, "60", ta.sma(volume, 20), lookahead=barmerge.lookahead_off)
+tf1h_high3d = request.security(syminfo.tickerid, "60", ta.highest(high, 72), lookahead=barmerge.lookahead_off)
+tf1h_low3d = request.security(syminfo.tickerid, "60", ta.lowest(low, 72), lookahead=barmerge.lookahead_off)
+
+float tf1h_volRatio = tf1h_vol / math.max(tf1h_avgVol, 1)
+bool tf1h_uptrend = tf1h_ema8 > tf1h_ema21 and tf1h_close > tf1h_ema21
+bool tf1h_downtrend = tf1h_ema8 < tf1h_ema21 and tf1h_close < tf1h_ema21
+bool tf1h_volSpike = tf1h_volRatio >= volThreshold
+bool tf1h_oversold = tf1h_rsi < 35
+// 추세 강도
+bool tf1h_emaAligned = tf1h_ema8 > tf1h_ema21 and tf1h_ema21 > tf1h_ema55
+bool tf1h_emaAlignedDn = tf1h_ema8 < tf1h_ema21 and tf1h_ema21 < tf1h_ema55
+tf1h_macd = request.security(syminfo.tickerid, "60", ta.ema(close, 12) - ta.ema(close, 26), lookahead=barmerge.lookahead_off)
+tf1h_macdSig = request.security(syminfo.tickerid, "60", ta.ema(ta.ema(close, 12) - ta.ema(close, 26), 9), lookahead=barmerge.lookahead_off)
+bool tf1h_macdBull = tf1h_macd > tf1h_macdSig
+
+// ============================================
+// 4시간봉 분석
+// ============================================
+
+tf4h_ema8 = request.security(syminfo.tickerid, "240", ta.ema(close, 8), lookahead=barmerge.lookahead_off)
+tf4h_ema21 = request.security(syminfo.tickerid, "240", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+tf4h_close = request.security(syminfo.tickerid, "240", close, lookahead=barmerge.lookahead_off)
+tf4h_rsi = request.security(syminfo.tickerid, "240", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
+tf4h_vol = request.security(syminfo.tickerid, "240", volume, lookahead=barmerge.lookahead_off)
+tf4h_avgVol = request.security(syminfo.tickerid, "240", ta.sma(volume, 20), lookahead=barmerge.lookahead_off)
+tf4h_high3d = request.security(syminfo.tickerid, "240", ta.highest(high, 18), lookahead=barmerge.lookahead_off)
+tf4h_low3d = request.security(syminfo.tickerid, "240", ta.lowest(low, 18), lookahead=barmerge.lookahead_off)
+
+float tf4h_volRatio = tf4h_vol / math.max(tf4h_avgVol, 1)
+bool tf4h_uptrend = tf4h_ema8 > tf4h_ema21 and tf4h_close > tf4h_ema21
+bool tf4h_downtrend = tf4h_ema8 < tf4h_ema21 and tf4h_close < tf4h_ema21
+bool tf4h_volSpike = tf4h_volRatio >= volThreshold
+bool tf4h_oversold = tf4h_rsi < 35
+// 추세 강도
+tf4h_ema55 = request.security(syminfo.tickerid, "240", ta.ema(close, 55), lookahead=barmerge.lookahead_off)
+bool tf4h_emaAligned = tf4h_ema8 > tf4h_ema21 and tf4h_ema21 > tf4h_ema55
+bool tf4h_emaAlignedDn = tf4h_ema8 < tf4h_ema21 and tf4h_ema21 < tf4h_ema55
+tf4h_macd = request.security(syminfo.tickerid, "240", ta.ema(close, 12) - ta.ema(close, 26), lookahead=barmerge.lookahead_off)
+tf4h_macdSig = request.security(syminfo.tickerid, "240", ta.ema(ta.ema(close, 12) - ta.ema(close, 26), 9), lookahead=barmerge.lookahead_off)
+bool tf4h_macdBull = tf4h_macd > tf4h_macdSig
+
+// ============================================
+// 일봉 분석
+// ============================================
+
+tfD_ema8 = request.security(syminfo.tickerid, "D", ta.ema(close, 8), lookahead=barmerge.lookahead_off)
+tfD_ema21 = request.security(syminfo.tickerid, "D", ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+tfD_close = request.security(syminfo.tickerid, "D", close, lookahead=barmerge.lookahead_off)
+tfD_rsi = request.security(syminfo.tickerid, "D", ta.rsi(close, 14), lookahead=barmerge.lookahead_off)
+tfD_high3d = request.security(syminfo.tickerid, "D", ta.highest(high, 3), lookahead=barmerge.lookahead_off)
+tfD_low3d = request.security(syminfo.tickerid, "D", ta.lowest(low, 3), lookahead=barmerge.lookahead_off)
+
+bool tfD_uptrend = tfD_ema8 > tfD_ema21 and tfD_close > tfD_ema21
+bool tfD_downtrend = tfD_ema8 < tfD_ema21 and tfD_close < tfD_ema21
+bool tfD_oversold = tfD_rsi < 35
+// 추세 강도
+tfD_ema55 = request.security(syminfo.tickerid, "D", ta.ema(close, 55), lookahead=barmerge.lookahead_off)
+bool tfD_emaAligned = tfD_ema8 > tfD_ema21 and tfD_ema21 > tfD_ema55
+bool tfD_emaAlignedDn = tfD_ema8 < tfD_ema21 and tfD_ema21 < tfD_ema55
+tfD_macd = request.security(syminfo.tickerid, "D", ta.ema(close, 12) - ta.ema(close, 26), lookahead=barmerge.lookahead_off)
+tfD_macdSig = request.security(syminfo.tickerid, "D", ta.ema(ta.ema(close, 12) - ta.ema(close, 26), 9), lookahead=barmerge.lookahead_off)
+bool tfD_macdBull = tfD_macd > tfD_macdSig
+
+// ============================================
+// 3일치 지지/저항 (모든 TF 통합)
+// ============================================
+
+// 1시간/4시간/일봉 기준 3일 고저
+float resistance3d = math.max(tf1h_high3d, tf4h_high3d, tfD_high3d)
+float support3d = math.min(tf1h_low3d, tf4h_low3d, tfD_low3d)
+
+// 현재 가격 위치 (%)
+float pricePosition = (close - support3d) / math.max(resistance3d - support3d, 0.0001) * 100
+
+// 지지/저항 근접 여부
+bool nearSupport3d = pricePosition < 15
+bool nearResistance3d = pricePosition > 85
+bool atSupport3d = pricePosition < 5
+bool atResistance3d = pricePosition > 95
+
+// ============================================
+// 타임프레임 일치 카운트 (15m/1H/4H/D = 4개)
+// ============================================
+
+// 상승 추세 일치 개수
+int uptrendCount = (tf15m_uptrend ? 1 : 0) + (tf1h_uptrend ? 1 : 0) + (tf4h_uptrend ? 1 : 0) + (tfD_uptrend ? 1 : 0)
+
+// 하락 추세 일치 개수
+int downtrendCount = (tf15m_downtrend ? 1 : 0) + (tf1h_downtrend ? 1 : 0) + (tf4h_downtrend ? 1 : 0) + (tfD_downtrend ? 1 : 0)
+
+// 거래량 급증 TF 개수 (현재TF + 15m/1H/4H = 4개)
+int volSpikeCount = (volSpike ? 1 : 0) + (tf15m_volSpike ? 1 : 0) + (tf1h_volSpike ? 1 : 0) + (tf4h_volSpike ? 1 : 0)
+
+// 과매도 TF 개수
+int oversoldCount = (rsi < 35 ? 1 : 0) + (tf15m_oversold ? 1 : 0) + (tf1h_oversold ? 1 : 0) + (tf4h_oversold ? 1 : 0)
+
+// EMA 정렬 TF 개수 (강한 추세) - 현재TF + 15m/1H/4H/D = 5개
+int emaAlignedUpCount = (emaAlignedUp ? 1 : 0) + (tf15m_emaAligned ? 1 : 0) + (tf1h_emaAligned ? 1 : 0) + (tf4h_emaAligned ? 1 : 0) + (tfD_emaAligned ? 1 : 0)
+int emaAlignedDnCount = (emaAlignedDown ? 1 : 0) + (tf15m_emaAlignedDn ? 1 : 0) + (tf1h_emaAlignedDn ? 1 : 0) + (tf4h_emaAlignedDn ? 1 : 0) + (tfD_emaAlignedDn ? 1 : 0)
+
+// MACD 상승 TF 개수 - 현재TF + 15m/1H/4H/D = 5개
+int macdBullCount = (macdBullish ? 1 : 0) + (tf15m_macdBull ? 1 : 0) + (tf1h_macdBull ? 1 : 0) + (tf4h_macdBull ? 1 : 0) + (tfD_macdBull ? 1 : 0)
+
+// 전체 추세 점수 (0~14: 4+5+5)
+int trendScore = uptrendCount + emaAlignedUpCount + macdBullCount
+string trendStrength = trendScore >= 12 ? "VERY STRONG" : trendScore >= 10 ? "STRONG" : trendScore >= 7 ? "MODERATE" : trendScore >= 5 ? "WEAK" : "BEAR"
+
+// ============================================
+// ★★★ 하모닉 패턴 감지 (V42 신규) ★★★
+// ============================================
+
+// 피보나치 상수
+float HFIB_382 = 0.382
+float HFIB_50 = 0.5
+float HFIB_618 = 0.618
+float HFIB_707 = 0.707
+float HFIB_786 = 0.786
+float HFIB_886 = 0.886
+float HFIB_113 = 1.13
+float HFIB_127 = 1.272
+float HFIB_141 = 1.414
+float HFIB_161 = 1.618
+
+// 피보나치 허용 오차 체크
+isWithinHarmonicTol(float value, float target, float tolerance) =>
+    math.abs(value - target) <= tolerance / 100
+
+// 패턴 감지 함수들
+isHarmonicGartley(float xab, float xad) =>
+    xab >= 0.588 - harmonicFibTolerance/100 and xab <= 0.648 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_786, harmonicFibTolerance)
+
+isHarmonicBat(float xab, float xad) =>
+    xab >= 0.382 - harmonicFibTolerance/100 and xab <= 0.50 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_886, harmonicFibTolerance)
+
+isHarmonicCrab(float xab, float xad) =>
+    xab >= 0.382 - harmonicFibTolerance/100 and xab <= 0.618 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_161, harmonicFibTolerance)
+
+isHarmonicButterfly(float xab, float xad) =>
+    xab >= 0.756 - harmonicFibTolerance/100 and xab <= 0.816 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_127, harmonicFibTolerance)
+
+isHarmonicCypher(float xab, float xac) =>
+    xab >= 0.382 - harmonicFibTolerance/100 and xab <= 0.618 + harmonicFibTolerance/100 and xac >= 1.13 - harmonicFibTolerance/100 and xac <= 1.414 + harmonicFibTolerance/100
+
+isHarmonic707(float xab, float xad) =>
+    xab >= 0.677 - harmonicFibTolerance/100 and xab <= 0.737 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_141, harmonicFibTolerance)
+
+isHarmonicShark(float xab, float xad) =>
+    xab >= 0.382 - harmonicFibTolerance/100 and xab <= 0.618 + harmonicFibTolerance/100 and xad >= 0.886 - harmonicFibTolerance/100 and xad <= 1.13 + harmonicFibTolerance/100
+
+isHarmonicABCD(float ab, float cd) =>
+    float ratio = cd / ab
+    isWithinHarmonicTol(ratio, 1.0, harmonicFibTolerance) or isWithinHarmonicTol(ratio, HFIB_127, harmonicFibTolerance) or isWithinHarmonicTol(ratio, HFIB_161, harmonicFibTolerance)
+
+// Deep Gartley: B 0.588-0.648, D 0.886 (PDF 기준)
+isHarmonicDeepGartley(float xab, float xad) =>
+    xab >= 0.588 - harmonicFibTolerance/100 and xab <= 0.648 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_886, harmonicFibTolerance)
+
+// Deep Crab: B 0.886-0.936, D 1.618 (PDF 기준)
+isHarmonicDeepCrab(float xab, float xad) =>
+    xab >= 0.886 - harmonicFibTolerance/100 and xab <= 0.936 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_161, harmonicFibTolerance)
+
+// Alternate Bat: B 0.352-0.382, D 1.13 (PDF 기준)
+isHarmonicAltBat(float xab, float xad) =>
+    xab >= 0.352 - harmonicFibTolerance/100 and xab <= 0.382 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_113, harmonicFibTolerance)
+
+// 5-0 Pattern: Shark 이후 BC의 0.5에서 반전 (PDF 기준)
+isHarmonicFiveZero(float xab, float xad, float bcRatio) =>
+    xab >= 0.382 - harmonicFibTolerance/100 and xab <= 0.618 + harmonicFibTolerance/100 and isWithinHarmonicTol(bcRatio, HFIB_50, harmonicFibTolerance)
+
+// 하모닉 스윙 포인트 수집
+var array<float> harmonicSwingHighs = array.new_float(0)
+var array<float> harmonicSwingLows = array.new_float(0)
+var array<int> harmonicSwingHighBars = array.new_int(0)
+var array<int> harmonicSwingLowBars = array.new_int(0)
+
+harmonicPh = ta.pivothigh(high, harmonicSwingLen, harmonicSwingLen)
+harmonicPl = ta.pivotlow(low, harmonicSwingLen, harmonicSwingLen)
+
+if not na(harmonicPh)
+    array.unshift(harmonicSwingHighs, harmonicPh)
+    array.unshift(harmonicSwingHighBars, bar_index - harmonicSwingLen)
+    if array.size(harmonicSwingHighs) > 10
+        array.pop(harmonicSwingHighs)
+        array.pop(harmonicSwingHighBars)
+
+if not na(harmonicPl)
+    array.unshift(harmonicSwingLows, harmonicPl)
+    array.unshift(harmonicSwingLowBars, bar_index - harmonicSwingLen)
+    if array.size(harmonicSwingLows) > 10
+        array.pop(harmonicSwingLows)
+        array.pop(harmonicSwingLowBars)
+
+// 패턴 변수
+var string currentHarmonicPattern = ""
+var bool currentHarmonicBullish = false
+var float currentHarmonicTP1 = na
+var float currentHarmonicTP2 = na
+var float currentHarmonicSL = na
+var float currentHarmonicQuality = 0.0
+var bool currentHarmonicIsPerfect = false
+
+// 패턴 찾기 함수
+findHarmonicPattern() =>
+    string patternName = ""
+    bool isBullish = false
+    float xP = na, float aP = na, float bP = na, float cP = na, float dP = na
+    int dB = na
+
+    if array.size(harmonicSwingHighs) >= 3 and array.size(harmonicSwingLows) >= 3
+        // Bullish 패턴
+        if array.size(harmonicSwingLows) >= 3 and array.size(harmonicSwingHighs) >= 2
+            tX = array.get(harmonicSwingLows, 2)
+            tA = array.get(harmonicSwingHighs, 1)
+            tB = array.get(harmonicSwingLows, 1)
+            tC = array.get(harmonicSwingHighs, 0)
+            tD = array.get(harmonicSwingLows, 0)
+            tXB = array.get(harmonicSwingLowBars, 2)
+            tAB = array.get(harmonicSwingHighBars, 1)
+            tBB = array.get(harmonicSwingLowBars, 1)
+            tCB = array.get(harmonicSwingHighBars, 0)
+            tDB = array.get(harmonicSwingLowBars, 0)
+
+            if tXB < tAB and tAB < tBB and tBB < tCB and tCB < tDB
+                if tA > tX and tB < tA and tC > tB and tD < tC
+                    xa = math.abs(tA - tX)
+                    xabRatio = math.abs(tB - tX) / xa
+                    xadRatio = math.abs(tD - tX) / xa
+                    xacRatio = math.abs(tC - tX) / xa
+                    ab = math.abs(tB - tA)
+                    cd = math.abs(tD - tC)
+                    bc = math.abs(tC - tB)
+                    bcRatio = bc > 0 ? math.abs(tD - tB) / bc : 0
+
+                    if showGartley and isHarmonicGartley(xabRatio, xadRatio)
+                        patternName := "Gartley"
+                    else if showDeepGartley and isHarmonicDeepGartley(xabRatio, xadRatio)
+                        patternName := "Deep Gartley"
+                    else if showBat and isHarmonicBat(xabRatio, xadRatio)
+                        patternName := "Bat"
+                    else if showAltBat and isHarmonicAltBat(xabRatio, xadRatio)
+                        patternName := "Alt Bat"
+                    else if showCrab and isHarmonicCrab(xabRatio, xadRatio)
+                        patternName := "Crab"
+                    else if showDeepCrab and isHarmonicDeepCrab(xabRatio, xadRatio)
+                        patternName := "Deep Crab"
+                    else if showButterfly and isHarmonicButterfly(xabRatio, xadRatio)
+                        patternName := "Butterfly"
+                    else if showCypher and isHarmonicCypher(xabRatio, xacRatio)
+                        patternName := "Cypher"
+                    else if show707 and isHarmonic707(xabRatio, xadRatio)
+                        patternName := "707"
+                    else if showShark and isHarmonicShark(xabRatio, xadRatio)
+                        patternName := "Shark"
+                    else if showFiveZero and isHarmonicFiveZero(xabRatio, xadRatio, bcRatio)
+                        patternName := "5-0"
+                    else if showABCD and isHarmonicABCD(ab, cd)
+                        patternName := "AB=CD"
+
+                    if patternName != ""
+                        isBullish := true
+                        xP := tX, aP := tA, bP := tB, cP := tC, dP := tD
+                        dB := tDB
+
+        // Bearish 패턴
+        if patternName == "" and array.size(harmonicSwingHighs) >= 3 and array.size(harmonicSwingLows) >= 2
+            tX = array.get(harmonicSwingHighs, 2)
+            tA = array.get(harmonicSwingLows, 1)
+            tB = array.get(harmonicSwingHighs, 1)
+            tC = array.get(harmonicSwingLows, 0)
+            tD = array.get(harmonicSwingHighs, 0)
+            tXB = array.get(harmonicSwingHighBars, 2)
+            tAB = array.get(harmonicSwingLowBars, 1)
+            tBB = array.get(harmonicSwingHighBars, 1)
+            tCB = array.get(harmonicSwingLowBars, 0)
+            tDB = array.get(harmonicSwingHighBars, 0)
+
+            if tXB < tAB and tAB < tBB and tBB < tCB and tCB < tDB
+                if tA < tX and tB > tA and tC < tB and tD > tC
+                    xa = math.abs(tA - tX)
+                    xabRatio = math.abs(tB - tX) / xa
+                    xadRatio = math.abs(tD - tX) / xa
+                    xacRatio = math.abs(tC - tX) / xa
+                    ab = math.abs(tB - tA)
+                    cd = math.abs(tD - tC)
+                    bc = math.abs(tC - tB)
+                    bcRatio = bc > 0 ? math.abs(tD - tB) / bc : 0
+
+                    if showGartley and isHarmonicGartley(xabRatio, xadRatio)
+                        patternName := "Gartley"
+                    else if showDeepGartley and isHarmonicDeepGartley(xabRatio, xadRatio)
+                        patternName := "Deep Gartley"
+                    else if showBat and isHarmonicBat(xabRatio, xadRatio)
+                        patternName := "Bat"
+                    else if showAltBat and isHarmonicAltBat(xabRatio, xadRatio)
+                        patternName := "Alt Bat"
+                    else if showCrab and isHarmonicCrab(xabRatio, xadRatio)
+                        patternName := "Crab"
+                    else if showDeepCrab and isHarmonicDeepCrab(xabRatio, xadRatio)
+                        patternName := "Deep Crab"
+                    else if showButterfly and isHarmonicButterfly(xabRatio, xadRatio)
+                        patternName := "Butterfly"
+                    else if showCypher and isHarmonicCypher(xabRatio, xacRatio)
+                        patternName := "Cypher"
+                    else if show707 and isHarmonic707(xabRatio, xadRatio)
+                        patternName := "707"
+                    else if showShark and isHarmonicShark(xabRatio, xadRatio)
+                        patternName := "Shark"
+                    else if showFiveZero and isHarmonicFiveZero(xabRatio, xadRatio, bcRatio)
+                        patternName := "5-0"
+                    else if showABCD and isHarmonicABCD(ab, cd)
+                        patternName := "AB=CD"
+
+                    if patternName != ""
+                        isBullish := false
+                        xP := tX, aP := tA, bP := tB, cP := tC, dP := tD
+                        dB := tDB
+
+    [patternName, isBullish, xP, aP, bP, cP, dP, dB]
+
+[detectedHarmonicPattern, harmonicBullish, hxP, haP, hbP, hcP, hdP, hdB] = findHarmonicPattern()
+
+// TP/SL 계산
+calcHarmonicTPSL(float a, float d, float x, bool isBullish) =>
+    ad = math.abs(d - a)
+    xa = math.abs(a - x)
+    float tp1 = isBullish ? d + ad * 0.382 : d - ad * 0.382
+    float tp2 = isBullish ? d + ad * 0.618 : d - ad * 0.618
+    float sl = isBullish ? x - xa * 0.1 : x + xa * 0.1
+    [tp1, tp2, sl]
+
+// 품질 점수 계산
+calcHarmonicQuality(string patternName, float xP, float aP, float bP, float dP) =>
+    if na(xP) or na(aP) or na(bP) or na(dP)
+        0.0
+    else
+        xa = math.abs(aP - xP)
+        xabRatio = math.abs(bP - xP) / xa
+        xadRatio = math.abs(dP - xP) / xa
+        float targetXAB = patternName == "Gartley" ? 0.618 : patternName == "Bat" ? 0.50 : patternName == "Crab" ? 0.618 : patternName == "Butterfly" ? 0.786 : patternName == "707" ? 0.707 : 0.5
+        float targetXAD = patternName == "Gartley" ? 0.786 : patternName == "Bat" ? 0.886 : patternName == "Crab" ? 1.618 : patternName == "Butterfly" ? 1.272 : patternName == "707" ? 1.414 : 1.0
+        float xabAccuracy = math.max(0.0, 30.0 - math.abs(xabRatio - targetXAB) * 100)
+        float xadAccuracy = math.max(0.0, 30.0 - math.abs(xadRatio - targetXAD) * 50)
+        math.min(100.0, 40.0 + xabAccuracy + xadAccuracy)
+
+// 패턴 업데이트
+if detectedHarmonicPattern != "" and not na(hdB) and bar_index - hdB < 5
+    currentHarmonicPattern := detectedHarmonicPattern
+    currentHarmonicBullish := harmonicBullish
+    currentHarmonicQuality := calcHarmonicQuality(detectedHarmonicPattern, hxP, haP, hbP, hdP)
+    currentHarmonicIsPerfect := currentHarmonicQuality >= 80
+    [tp1, tp2, sl] = calcHarmonicTPSL(haP, hdP, hxP, harmonicBullish)
+    currentHarmonicTP1 := tp1
+    currentHarmonicTP2 := tp2
+    currentHarmonicSL := sl
+
+// 하모닉 시각화
+var line hLineXA = na, var line hLineAB = na, var line hLineBC = na, var line hLineCD = na
+var label hPatternLabel = na
+var box hPrzBox = na
+var line hTp1Line = na, var line hTp2Line = na, var line hSlLine = na
+
+if showHarmonic and detectedHarmonicPattern != "" and not na(hdB) and bar_index - hdB < 5
+    hPatternColor = harmonicBullish ? harmonicBullColor : harmonicBearColor
+
+    line.delete(hLineXA), line.delete(hLineAB), line.delete(hLineBC), line.delete(hLineCD)
+    label.delete(hPatternLabel), box.delete(hPrzBox)
+    line.delete(hTp1Line), line.delete(hTp2Line), line.delete(hSlLine)
+
+    if showHarmonicLabels
+        labelY = harmonicBullish ? hdP - atrValueForTrail * 0.5 : hdP + atrValueForTrail * 0.5
+        labelStyle = harmonicBullish ? label.style_label_up : label.style_label_down
+        qualityStr = currentHarmonicIsPerfect ? " PERFECT" : " Q:" + str.tostring(currentHarmonicQuality, "#") + "%"
+        labelText = (harmonicBullish ? "BULL " : "BEAR ") + detectedHarmonicPattern + qualityStr
+        hPatternLabel := label.new(hdB, labelY, labelText, color=hPatternColor, textcolor=color.white, style=labelStyle, size=size.normal)
+
+    if showPRZ
+        xa = math.abs(haP - hxP)
+        przTop = harmonicBullish ? hdP : hdP + xa * 0.1
+        przBottom = harmonicBullish ? hdP - xa * 0.1 : hdP
+        hPrzBox := box.new(hdB - 5, math.max(przTop, przBottom), hdB + 20, math.min(przTop, przBottom), bgcolor=przColor, border_color=color.yellow)
+
+    if showTPSL and not na(currentHarmonicTP1)
+        hTp1Line := line.new(hdB, currentHarmonicTP1, bar_index + 15, currentHarmonicTP1, color=color.lime, width=2, style=line.style_dashed)
+        hTp2Line := line.new(hdB, currentHarmonicTP2, bar_index + 15, currentHarmonicTP2, color=color.lime, width=2, style=line.style_dashed)
+        hSlLine := line.new(hdB, currentHarmonicSL, bar_index + 15, currentHarmonicSL, color=color.red, width=2, style=line.style_dashed)
+
+// RSI BAMM
+harmonicRsiValue = ta.rsi(close, rsiBAMMLength)
+harmonicRsiOB = harmonicRsiValue > rsiBAMMOB
+harmonicRsiOS = harmonicRsiValue < rsiBAMMOS
+harmonicRsiCross50Up = ta.crossover(harmonicRsiValue, 50)
+harmonicRsiCross50Down = ta.crossunder(harmonicRsiValue, 50)
+
+hPriceHigh = high > ta.highest(high, 14)[1]
+hPriceLow = low < ta.lowest(low, 14)[1]
+hRsiHigher = harmonicRsiValue > ta.highest(harmonicRsiValue, 14)[1]
+hRsiLower = harmonicRsiValue < ta.lowest(harmonicRsiValue, 14)[1]
+
+hBullishDiv = hPriceLow and not hRsiLower and harmonicRsiValue[1] < 40
+hBearishDiv = hPriceHigh and not hRsiHigher and harmonicRsiValue[1] > 60
+
+rsiBAMMBuy = showRSIBAMM and hBullishDiv and harmonicRsiCross50Up
+rsiBAMMSell = showRSIBAMM and hBearishDiv and harmonicRsiCross50Down
+
+if rsiBAMMBuy
+    label.new(bar_index, low - atrValueForTrail, "BAMM\nBUY", color=color.lime, textcolor=color.black, style=label.style_label_up, size=size.small)
+
+if rsiBAMMSell and showShortSignals
+    label.new(bar_index, high + atrValueForTrail, "BAMM\nSELL", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// ============================================
+// 정확성 필터 계산 (V42 신규)
+// ============================================
+// 추세 EMA
+harmonicTrendEMA = ta.ema(close, trendEMALen)
+harmonicBullishTrend = close > harmonicTrendEMA and harmonicTrendEMA > harmonicTrendEMA[5]
+harmonicBearishTrend = close < harmonicTrendEMA and harmonicTrendEMA < harmonicTrendEMA[5]
+
+// 거래량 확인
+harmonicVolumeMA = ta.sma(volume, 20)
+harmonicVolumeConfirm = volume > harmonicVolumeMA * harmonicVolumeMultiplier
+
+// RSI 확인
+harmonicRsiConfirmBull = harmonicRsiValue < rsiConfirmLevel
+harmonicRsiConfirmBear = harmonicRsiValue > (100 - rsiConfirmLevel)
+
+// 컨플루언스 점수 (5가지 조건)
+calcHarmonicConfluence(bool isBullish) =>
+    int confScore = 0
+    // 1. 추세 확인
+    confScore += (isBullish and harmonicBullishTrend) or (not isBullish and harmonicBearishTrend) ? 1 : 0
+    // 2. RSI 확인
+    confScore += (isBullish and harmonicRsiConfirmBull) or (not isBullish and harmonicRsiConfirmBear) ? 1 : 0
+    // 3. 거래량 확인
+    confScore += harmonicVolumeConfirm ? 1 : 0
+    // 4. MACD 방향 확인
+    confScore += (isBullish and macdBullish) or (not isBullish and not macdBullish) ? 1 : 0
+    // 5. EMA200 위치 확인
+    confScore += (isBullish and close > ema200) or (not isBullish and close < ema200) ? 1 : 0
+    confScore
+
+harmonicConfluenceBull = calcHarmonicConfluence(true)
+harmonicConfluenceBear = calcHarmonicConfluence(false)
+
+// 필터 통과 여부
+passHarmonicQualityFilter = currentHarmonicQuality >= minQualityScore and (not requirePerfect or currentHarmonicIsPerfect)
+passHarmonicTrendFilter = not useTrendFilter or (currentHarmonicBullish and harmonicBullishTrend) or (not currentHarmonicBullish and harmonicBearishTrend)
+passHarmonicRSIFilter = not useRSIConfirm or (currentHarmonicBullish and harmonicRsiConfirmBull) or (not currentHarmonicBullish and harmonicRsiConfirmBear)
+passHarmonicVolumeFilter = not useHarmonicVolumeFilter or harmonicVolumeConfirm
+passHarmonicConfluenceFilter = not useConfluence or (currentHarmonicBullish ? harmonicConfluenceBull : harmonicConfluenceBear) >= minConfluenceScore
+
+passAllHarmonicFilters = passHarmonicQualityFilter and passHarmonicTrendFilter and passHarmonicRSIFilter and passHarmonicVolumeFilter and passHarmonicConfluenceFilter
+
+// 필터 적용된 하모닉 신호
+filteredHarmonicSignal = detectedHarmonicPattern != "" and passAllHarmonicFilters
+filteredHarmonicBullSignal = filteredHarmonicSignal and harmonicBullish
+filteredHarmonicBearSignal = filteredHarmonicSignal and not harmonicBullish
+
+// ============================================
+// 30점 점수 시스템 (V37 방식)
+// ============================================
+
+// LONG 점수
+float longScore = 0
+
+// 추세 (8점)
+longScore += emaAlignedUp ? 3 : (ema8 > ema21 ? 1 : 0)
+longScore += aboveEMA200 ? 2 : 0
+longScore += tf1h_uptrend ? 2 : 0
+longScore += tf4h_uptrend ? 1 : 0
+
+// 모멘텀 (8점)
+longScore += stochOversold ? 3 : (stochK < 40 and stochBullish ? 2 : stochBullish ? 1 : 0)
+longScore += macdBullish ? 2 : 0
+longScore += rsiOversold ? 2 : (rsi < 45 ? 1 : 0)
+longScore += (bullishDI and trendStrong) ? 1 : 0
+
+// 거래량 (6점)
+longScore += volumeExplosion and strongBuyPressure ? 3 : (volSpike and strongBuyPressure ? 2 : volSpike ? 1 : 0)
+int multiTFVolCount = (tf15m_volSpike ? 1 : 0) + (tf1h_volSpike ? 1 : 0) + (tf4h_volSpike ? 1 : 0)
+bool multiTFVolume = multiTFVolCount >= 2
+longScore += multiTFVolume and strongBuyPressure ? 3 : (multiTFVolume ? 2 : 0)
+
+// 구조 (8점)
+longScore += atSupport3d ? 3 : (nearSupport3d ? 2 : 0)
+longScore += pricePosition < 20 ? 2 : 0
+longScore += touchBBLower ? 2 : 0
+longScore += bullishDivergence ? 1 : 0
+
+// Volume Delta (4점) - 호가창 대체 분석
+longScore += strongPositiveDelta and delta3ConsecutiveBuy ? 3 : (positiveDelta and cvdUptrend ? 2 : positiveDelta ? 1 : 0)
+longScore += deltaBullDiv ? 1 : 0  // Delta 강세 다이버전스
+
+// 스마트 OBV 점수 (잭 웨이드 전략)
+longScore += squeezeBreakoutUp ? 3 : (smartOBVMomentumUp ? 2 : smartOBVAboveCenter ? 1 : 0)
+longScore += smartOBVCrossUp ? 1 : 0  // 매수세 전환 신호
+
+// ★ 하모닉 패턴 점수 (V42 신규) ★
+longScore += filteredHarmonicBullSignal ? 5 : (detectedHarmonicPattern != "" and harmonicBullish ? 3 : 0)
+longScore += rsiBAMMBuy ? 2 : 0
+
+// SHORT 점수용 Delta (참고)
+float shortDeltaScore = strongNegativeDelta and delta3ConsecutiveSell ? 3 : (negativeDelta and cvdDowntrend ? 2 : negativeDelta ? 1 : 0)
+shortDeltaScore += deltaBearDiv ? 1 : 0
+
+// ============================================
+// 고확신 조건 (V37 방식 + Delta 강화)
+// ============================================
+
+// [확신도 1] HTF 추세 일치 + 지지선 + 거래량 = 최고 승률
+bool highConf1 = tf1h_uptrend and tf4h_uptrend and (atSupport3d or pricePosition < 10) and volSpike and strongBuyPressure
+
+// [확신도 2] 다이버전스 + 과매도 + 거래량 = 반전 확률
+bool highConf2 = bullishDivergence and (rsiOversold or stochOversold) and volSpike
+
+// [확신도 3] BB 하단 + 과매도 + HTF 상승 = 바운스
+bool highConf3 = touchBBLower and stochOversold and tf1h_uptrend and volSpike
+
+// [확신도 4] EMA 정렬 + ADX 강함 + MTF 거래량 = 추세 지속
+bool highConf4 = emaAlignedUp and aboveEMA200 and trendStrong and multiTFVolume
+
+// [확신도 5] Delta 강세 + CVD 상승 + HTF 상승 = 수급 확인
+bool highConf5 = strongPositiveDelta and cvdUptrend and delta3ConsecutiveBuy and tf1h_uptrend
+
+// [확신도 6] Delta 다이버전스 + 과매도 = 반전 수급
+bool highConf6 = deltaBullDiv and (rsiOversold or stochOversold) and nearSupport3d
+
+// [확신도 7] 하모닉 패턴 (필터 통과) + 추세 일치 = 고정확 반전
+bool highConf7 = filteredHarmonicBullSignal and tf1h_uptrend and harmonicVolumeConfirm
+
+// [확신도 8] RSI BAMM 매수 + 지지선 = 강력 반전
+bool highConf8 = rsiBAMMBuy and nearSupport3d and volSpike
+
+// 높은 확신도 LONG
+bool highConfidenceLong = highConf1 or highConf2 or highConf3 or highConf4 or highConf5 or highConf6 or highConf7 or highConf8
+
+// 확신도 이유
+string confReason = highConf1 ? "HTF+SR+VOL" : highConf2 ? "DIV+OVERSOLD" : highConf3 ? "BB+OVERSOLD" : highConf4 ? "TREND+VOL" : highConf5 ? "DELTA+CVD" : highConf6 ? "DELTA_DIV" : highConf7 ? "HARMONIC" : highConf8 ? "RSI_BAMM" : "-"
+
+// ============================================
+// 신호 등급 시스템 (30% 강화)
+// ============================================
+
+// S등급: 3TF 상승 + 지지근처 + 거래량 + 고확신 + 매수압력
+bool gradeS = uptrendCount >= 3 and nearSupport3d and volSpikeCount >= 1 and highConfidenceLong and buyPressure > 52
+
+// A등급: 3TF 상승 + 거래량 + 매수압력 강화
+bool gradeA = uptrendCount >= 3 and volSpikeCount >= 1 and buyPressure > 55
+
+// B등급: 2TF 상승 + 1H 상승
+bool gradeB = uptrendCount >= 2 and tf1h_uptrend
+
+// 현재 등급 (점수 기반으로도 표시)
+string currentGrade = gradeS ? "S" : longScore >= 22 ? "A+" : gradeA ? "A" : longScore >= 16 ? "B+" : gradeB ? "B" : "C"
+
+// ============================================
+// LONG 시그널 조건
+// ============================================
+
+// 강력 LONG: S등급 또는 A등급
+bool strongLong = gradeS or gradeA
+
+// 일반 LONG: B등급 이상
+bool normalLong = gradeB and not strongLong
+
+// SUPER LONG: 모든 조건 일치 (기존 STRONG + SMC + Smart Trail)
+bool superLong = strongLong and smcBullish and smartTrailUp and (isBullishOB or isBullishFVG or chochUp)
+
+// 대기: C등급
+bool waitSignal = not strongLong and not normalLong
+
+// ============================================
+// SHORT 등급 시스템 (30% 강화)
+// ============================================
+
+// SHORT S등급: 3TF 하락 + 저항근처 + 거래량 + 매도압력
+bool gradeS_short = downtrendCount >= 3 and nearResistance3d and volSpikeCount >= 1 and buyPressure < 48
+
+// SHORT A등급: 2TF 하락 + 거래량 + 매도압력
+bool gradeA_short = downtrendCount >= 2 and volSpikeCount >= 1 and buyPressure < 52
+
+// SHORT B등급: 2TF 하락 + 1H 하락
+bool gradeB_short = downtrendCount >= 2 and not tf1h_uptrend
+
+// SHORT 시그널
+bool superShort = showShortSignals and gradeS_short and smcBearish and not smartTrailUp
+bool strongShort = showShortSignals and (gradeS_short or gradeA_short) and not superShort
+bool normalShort = showShortSignals and gradeB_short and not strongShort and not superShort
+
+// 최종 등급 업데이트
+string finalGrade = superLong ? "SUPER" : currentGrade
+
+// ============================================
+// 매도 시그널 (Smart Trail 기반)
+// ============================================
+
+// Smart Trail 전환 감지
+var bool prevSmartTrailUp = true
+bool trailFlipToShort = prevSmartTrailUp and not smartTrailUp  // LONG → SHORT 전환
+bool trailFlipToLong = not prevSmartTrailUp and smartTrailUp   // SHORT → LONG 전환
+prevSmartTrailUp := smartTrailUp
+
+// 청산 시그널 (더 엄격한 조건: Trail전환 + 점수낮음 + 1H하락)
+bool exitLongSignal = trailFlipToShort and longScore < 12 and not tf1h_uptrend
+
+// EXIT SHORT 시그널
+bool exitShortSignal = trailFlipToLong and not tf1h_uptrend == false
+
+// ============================================
+// V40 필터 시스템
+// ============================================
+
+// 1. 동적 파라미터 (ATR 기반)
+float atrValue = ta.atr(atrPeriod)
+float atrSMA = ta.sma(atrValue, atrPeriod)
+float atrRatio = atrValue / atrSMA
+bool highVolatility = enableDynamicParams and atrRatio > highVolThreshold
+bool lowVolatility = enableDynamicParams and atrRatio < lowVolThreshold
+
+// 동적 쿨다운 (변동성에 따라 조정)
+int dynamicCooldownBars = enableDynamicParams and dynamicCooldown ?
+     (highVolatility ? math.floor(cooldownBars * 0.6) :  // 고변동성: 쿨다운 40% 단축
+      lowVolatility ? math.floor(cooldownBars * 1.5) :   // 저변동성: 쿨다운 50% 연장
+      cooldownBars) : cooldownBars
+
+// 2. 쿨다운 시스템
+var int lastSignalBar = 0
+int barsSinceSignal = bar_index - lastSignalBar
+bool cooldownActive = enableCooldown and barsSinceSignal < dynamicCooldownBars
+bool cooldownPass = not enableCooldown or not cooldownActive
+
+// 3. 볼륨 필터
+float volumeAvg = ta.sma(volume, volumeAvgLength)
+bool volumeFilterPass = not enableVolumeFilter or (volume >= volumeAvg * minVolumeRatio)
+
+// 4. 시간 필터 (UTC 기준)
+int hourUTC = hour(time, "UTC")
+bool asiaEUTransition = excludeAsiaEU and hourUTC >= 8 and hourUTC < 10
+bool euUSTransition = excludeEUUS and hourUTC >= 14 and hourUTC < 16
+bool timeFilterPass = not enableTimeFilter or (not asiaEUTransition and not euUSTransition)
+
+// ============================================
+// 5. ICT Killzones (기관 매매 시간대)
+// ============================================
+// London Open: 08:00-10:00 UTC (가장 활발)
+bool inLondonOpen = kzLondonOpen and hourUTC >= 8 and hourUTC < 10
+
+// NY Open: 13:00-15:00 UTC (두 번째로 활발)
+bool inNYOpen = kzNYOpen and hourUTC >= 13 and hourUTC < 15
+
+// London Close: 15:00-17:00 UTC (큰 움직임)
+bool inLondonClose = kzLondonClose and hourUTC >= 15 and hourUTC < 17
+
+// Asian Open: 00:00-02:00 UTC (선택적)
+bool inAsianOpen = kzAsianOpen and hourUTC >= 0 and hourUTC < 2
+
+// Killzone 내부인지 확인
+bool inKillzone = inLondonOpen or inNYOpen or inLondonClose or inAsianOpen
+bool killzonePass = not enableKillzones or inKillzone
+
+// Killzone 이름 (테이블용)
+string currentKillzone = inLondonOpen ? "London Open" :
+                         inNYOpen ? "NY Open" :
+                         inLondonClose ? "London Close" :
+                         inAsianOpen ? "Asian" : "Outside KZ"
+
+// ============================================
+// 6. Liquidity Sweep (유동성 스윕 감지)
+// ============================================
+// 최근 고점/저점 찾기
+float recentHigh = ta.highest(high, liqSweepLookback)
+float recentLow = ta.lowest(low, liqSweepLookback)
+
+// 캔들 꼬리 계산
+float upperWick = high - math.max(open, close)
+float lowerWick = math.min(open, close) - low
+float bodySize = math.abs(close - open)
+float candleRange = high - low
+
+// 꼬리 비율 (%)
+float upperWickRatio = candleRange > 0 ? upperWick / candleRange * 100 : 0
+float lowerWickRatio = candleRange > 0 ? lowerWick / candleRange * 100 : 0
+
+// Liquidity Sweep 조건
+// Bullish Sweep: 저점 돌파 후 위로 마감 (긴 아래꼬리)
+bool bullishSweep = enableLiqSweep and low <= recentLow[1] and close > open and lowerWickRatio >= liqSweepMinWick * 10 and close > low + candleRange * 0.5
+
+// Bearish Sweep: 고점 돌파 후 아래로 마감 (긴 위꼬리)
+bool bearishSweep = enableLiqSweep and high >= recentHigh[1] and close < open and upperWickRatio >= liqSweepMinWick * 10 and close < high - candleRange * 0.5
+
+// Sweep 신호 (진입에 활용)
+bool liqSweepBullish = bullishSweep
+bool liqSweepBearish = bearishSweep
+
+// V40 종합 필터 (Killzone 추가)
+bool v40FilterPass = cooldownPass and volumeFilterPass and timeFilterPass and killzonePass
+
+// ============================================
+// 7. 청산 매물대 (Liquidation Levels)
+// ============================================
+
+// 롱 청산가 = 진입가 * (1 - 1/레버리지 + 유지마진율)
+// 숏 청산가 = 진입가 * (1 + 1/레버리지 - 유지마진율)
+
+float liqLong10x = close * (1 - 1/10.0 + liqMaintenanceMargin)
+float liqLong25x = close * (1 - 1/25.0 + liqMaintenanceMargin)
+float liqLong50x = close * (1 - 1/50.0 + liqMaintenanceMargin)
+float liqLong100x = close * (1 - 1/100.0 + liqMaintenanceMargin)
+
+float liqShort10x = close * (1 + 1/10.0 - liqMaintenanceMargin)
+float liqShort25x = close * (1 + 1/25.0 - liqMaintenanceMargin)
+float liqShort50x = close * (1 + 1/50.0 - liqMaintenanceMargin)
+float liqShort100x = close * (1 + 1/100.0 - liqMaintenanceMargin)
+
+// 청산 구간 근접 감지 (1% 이내)
+bool nearLongLiq50x = low <= liqLong50x * 1.01 and low >= liqLong50x * 0.99
+bool nearLongLiq100x = low <= liqLong100x * 1.01 and low >= liqLong100x * 0.99
+bool nearShortLiq50x = high >= liqShort50x * 0.99 and high <= liqShort50x * 1.01
+bool nearShortLiq100x = high >= liqShort100x * 0.99 and high <= liqShort100x * 1.01
+
+// 청산 스윕 감지 (청산 레벨 돌파 후 반전) - 쿨다운 적용
+// 조건 강화: 이전 봉 종가가 레벨 위에 있었는데, 현재 봉에서 아래로 갔다가 다시 위로 마감
+bool longLiq50xSweepRaw = low < liqLong50x and close > liqLong50x and close[1] > liqLong50x
+bool longLiq100xSweepRaw = low < liqLong100x and close > liqLong100x and close[1] > liqLong100x
+bool shortLiq50xSweepRaw = high > liqShort50x and close < liqShort50x and close[1] < liqShort50x
+bool shortLiq100xSweepRaw = high > liqShort100x and close < liqShort100x and close[1] < liqShort100x
+
+// 레버리지 청산 스윕 쿨다운 (15봉)
+var int lastLevLongLiqBar = 0
+var int lastLevShortLiqBar = 0
+int levLiqCooldown = 15
+
+bool longLiq50xSweep = longLiq50xSweepRaw and (bar_index - lastLevLongLiqBar > levLiqCooldown)
+bool longLiq100xSweep = longLiq100xSweepRaw and (bar_index - lastLevLongLiqBar > levLiqCooldown)
+bool shortLiq50xSweep = shortLiq50xSweepRaw and (bar_index - lastLevShortLiqBar > levLiqCooldown)
+bool shortLiq100xSweep = shortLiq100xSweepRaw and (bar_index - lastLevShortLiqBar > levLiqCooldown)
+
+// 쿨다운 업데이트
+if longLiq50xSweep or longLiq100xSweep
+    lastLevLongLiqBar := bar_index
+if shortLiq50xSweep or shortLiq100xSweep
+    lastLevShortLiqBar := bar_index
+
+// 청산 스윕 통합 (대량 청산 후 반전 = 강한 신호)
+bool bullishLiqSweep = (longLiq50xSweep or longLiq100xSweep) and liqSweepBoost
+bool bearishLiqSweep = (shortLiq50xSweep or shortLiq100xSweep) and liqSweepBoost
+
+// 시그널 모드에 따른 필터링 (V40 필터 적용)
+// V40+: Liquidity Sweep 또는 청산 스윕 시 STRONG → SUPER로 승격
+bool sweepUpgrade = (liqSweepBullish or bullishLiqSweep) and strongLong and not superLong
+bool showSuperLong = (superLong or sweepUpgrade) and v40FilterPass and (signalMode == "전체" or signalMode == "STRONG 이상" or signalMode == "SUPER만")
+bool showStrongLong = strongLong and not superLong and not sweepUpgrade and v40FilterPass and (signalMode == "전체" or signalMode == "STRONG 이상") and (nearSupport3d or smcBullish)
+bool showNormalLong = normalLong and v40FilterPass and signalMode == "전체"
+
+// 신호 발생 시 쿨다운 시작
+if showSuperLong or showStrongLong or showNormalLong
+    lastSignalBar := bar_index
+
+// ============================================
+// 심리적 매매 구간 분석
+// ============================================
+
+// 1. 라운드 넘버 (Round Numbers)
+float roundBelow = math.floor(close / roundNumInterval) * roundNumInterval
+float roundAbove = roundBelow + roundNumInterval
+float distToRoundBelow = math.abs(close - roundBelow) / close * 100
+float distToRoundAbove = math.abs(roundAbove - close) / close * 100
+bool nearRoundBelow = distToRoundBelow < 1.0  // 1% 이내
+bool nearRoundAbove = distToRoundAbove < 1.0
+bool atRoundNumber = distToRoundBelow < 0.3 or distToRoundAbove < 0.3  // 0.3% 이내
+
+// 2. 공포/탐욕 지표 (Fear & Greed)
+// RSI 기반 + 가격 편차 + 볼륨
+float ema20 = ta.ema(close, 20)
+float priceDeviation = (close - ema20) / ema20 * 100  // EMA20 대비 편차
+float rsiNorm = (rsi - 50) / 50  // -1 ~ +1 정규화
+float volNorm = math.min((volRatio - 1) / 4, 1)  // 0 ~ 1 정규화
+
+// 공포/탐욕 점수 (-100 ~ +100)
+float fearGreedRaw = (rsiNorm * 40) + (priceDeviation * 3) + (volNorm * 20 * (close > ema20 ? 1 : -1))
+float fearGreedScore = math.max(-100, math.min(100, fearGreedRaw))
+
+// 공포/탐욕 등급
+string fearGreedGrade = fearGreedScore <= -60 ? "극단적공포" : fearGreedScore <= -30 ? "공포" : fearGreedScore <= -10 ? "약한공포" : fearGreedScore < 10 ? "중립" : fearGreedScore < 30 ? "약한탐욕" : fearGreedScore < 60 ? "탐욕" : "극단적탐욕"
+
+string fearGreedEmoji = fearGreedScore <= -60 ? "😱" : fearGreedScore <= -30 ? "😨" : fearGreedScore <= -10 ? "😟" : fearGreedScore < 10 ? "😐" : fearGreedScore < 30 ? "🙂" : fearGreedScore < 60 ? "😀" : "🤑"
+
+color fearGreedColor = fearGreedScore <= -60 ? color.new(color.green, 0) : fearGreedScore <= -30 ? color.new(color.lime, 20) : fearGreedScore <= -10 ? color.new(color.teal, 30) : fearGreedScore < 10 ? color.new(color.gray, 50) : fearGreedScore < 30 ? color.new(color.orange, 30) : fearGreedScore < 60 ? color.new(color.red, 20) : color.new(color.fuchsia, 0)
+
+// 매수/매도 심리 구간
+bool psychBuyZone = fearGreedScore <= -30 and nearSupport3d  // 공포 + 지지대 근처
+bool psychSellZone = fearGreedScore >= 30 and nearResistance3d  // 탐욕 + 저항대 근처
+bool extremeFear = fearGreedScore <= -60  // 극단적 공포 = 강한 매수 신호
+bool extremeGreed = fearGreedScore >= 60  // 극단적 탐욕 = 강한 매도 신호
+
+// 3. 볼륨 프로파일 기반 지지/저항 (간략 버전)
+float volHigh = ta.highest(volume, 50)
+float volLow = ta.lowest(volume, 50)
+float volAvg50 = ta.sma(volume, 50)
+bool highVolBar = volume > volAvg50 * 2
+
+// 고거래량 발생 가격대 추적 (최근 50봉 중 고거래량 발생한 가격)
+var float volSupportLevel = na
+var float volResistanceLevel = na
+
+if highVolBar and close > open
+    volSupportLevel := low
+if highVolBar and close < open
+    volResistanceLevel := high
+
+bool nearVolSupport = not na(volSupportLevel) and math.abs(close - volSupportLevel) / close * 100 < 1.5
+bool nearVolResistance = not na(volResistanceLevel) and math.abs(close - volResistanceLevel) / close * 100 < 1.5
+
+// 4. 피보나치 레벨
+float fibHigh = ta.highest(high, fibLookback)
+float fibLow = ta.lowest(low, fibLookback)
+float fibRange = fibHigh - fibLow
+
+float fib236 = fibHigh - fibRange * 0.236
+float fib382 = fibHigh - fibRange * 0.382
+float fib500 = fibHigh - fibRange * 0.5
+float fib618 = fibHigh - fibRange * 0.618
+float fib786 = fibHigh - fibRange * 0.786
+
+bool nearFib382 = math.abs(close - fib382) / close * 100 < 0.5
+bool nearFib500 = math.abs(close - fib500) / close * 100 < 0.5
+bool nearFib618 = math.abs(close - fib618) / close * 100 < 0.5
+
+// 5. 주요 고점/저점 (심리적 지지/저항)
+float keyHigh1 = ta.highest(high, keyLevelLookback)
+float keyLow1 = ta.lowest(low, keyLevelLookback)
+float keyHigh2 = ta.highest(high, keyLevelLookback * 2)
+float keyLow2 = ta.lowest(low, keyLevelLookback * 2)
+
+// 심리적 스윙 고점/저점 찾기 (기존 swingHigh와 별도)
+float psychSwingHigh = ta.pivothigh(high, 15, 15)
+float psychSwingLow = ta.pivotlow(low, 15, 15)
+
+var float lastPsychHigh = na
+var float lastPsychLow = na
+var float prevPsychHigh = na
+var float prevPsychLow = na
+
+if not na(psychSwingHigh)
+    prevPsychHigh := lastPsychHigh
+    lastPsychHigh := psychSwingHigh
+if not na(psychSwingLow)
+    prevPsychLow := lastPsychLow
+    lastPsychLow := psychSwingLow
+
+bool nearKeyHigh = not na(lastPsychHigh) and math.abs(close - lastPsychHigh) / close * 100 < 1.0
+bool nearKeyLow = not na(lastPsychLow) and math.abs(close - lastPsychLow) / close * 100 < 1.0
+
+// 6. POC (Point of Control) - 거래량 집중 가격대
+var float[] priceVolume = array.new_float(20, 0.0)
+var float[] priceLevels = array.new_float(20, 0.0)
+
+float priceRangeHigh = ta.highest(high, pocLookback)
+float priceRangeLow = ta.lowest(low, pocLookback)
+float priceStep = (priceRangeHigh - priceRangeLow) / 20
+
+// 현재 봉의 가격대 인덱스
+int priceIndex = priceStep > 0 ? math.min(19, math.max(0, int((close - priceRangeLow) / priceStep))) : 0
+
+// 거래량 누적
+if bar_index > pocLookback
+    array.set(priceVolume, priceIndex, array.get(priceVolume, priceIndex) + volume)
+    array.set(priceLevels, priceIndex, priceRangeLow + priceStep * priceIndex + priceStep / 2)
+
+// POC 찾기 (가장 거래량 많은 가격대)
+var float pocPrice = na
+var float maxVol = 0.0
+var float hvnPrice1 = na  // High Volume Node 1
+var float hvnPrice2 = na  // High Volume Node 2
+
+if barstate.islast
+    maxVol := 0.0
+    float secondMaxVol = 0.0
+    for i = 0 to 19
+        float vol = array.get(priceVolume, i)
+        if vol > maxVol
+            secondMaxVol := maxVol
+            hvnPrice2 := hvnPrice1
+            maxVol := vol
+            pocPrice := array.get(priceLevels, i)
+            hvnPrice1 := pocPrice
+        else if vol > secondMaxVol
+            secondMaxVol := vol
+            hvnPrice2 := array.get(priceLevels, i)
+
+bool nearPOC = not na(pocPrice) and math.abs(close - pocPrice) / close * 100 < 0.5
+
+// 종합 심리적 구간 판단
+string psychZone = extremeFear ? "극단적공포" : extremeGreed ? "극단적탐욕" : psychBuyZone ? "매수구간" : psychSellZone ? "매도구간" : nearRoundBelow ? "라운드지지" : nearRoundAbove ? "라운드저항" : nearFib618 ? "Fib618" : nearFib500 ? "Fib500" : nearFib382 ? "Fib382" : "중립"
+
+// ============================================
+// 차트 표시
+// ============================================
+
+// EMA
+plot(showEMA ? ema8 : na, color=color.yellow, linewidth=1, title="EMA 8")
+plot(showEMA ? ema21 : na, color=color.orange, linewidth=2, title="EMA 21")
+plot(showEMA ? ema55 : na, color=color.blue, linewidth=1, title="EMA 55")
+plot(showEMA ? ema200 : na, color=color.purple, linewidth=1, title="EMA 200")
+
+// EMA 각도 색상 라인 (추세 강도 시각화)
+plot(showEMAAngle ? emaAngle14 : na, color=emaAngleColor, linewidth=3, title="EMA Angle")
+
+// 볼린저밴드
+plot(showBB ? bbUpper : na, color=color.new(color.gray, 50), linewidth=1, title="BB Upper")
+plot(showBB ? bbBasis : na, color=color.new(color.gray, 70), linewidth=1, title="BB Basis")
+plot(showBB ? bbLower : na, color=color.new(color.gray, 50), linewidth=1, title="BB Lower")
+
+// ============================================
+// 일목균형표 구름 시각화
+// ============================================
+// 선행스팬A/B를 26일 앞에 표시 (offset)
+p1 = plot(showIchimoku ? senkouSpanA : na, offset=displacement, color=color.new(color.green, 80), linewidth=1, title="Senkou A")
+p2 = plot(showIchimoku ? senkouSpanB : na, offset=displacement, color=color.new(color.red, 80), linewidth=1, title="Senkou B")
+
+// 구름 채우기 (양운=초록, 음운=빨강)
+fill(p1, p2, color=senkouSpanA > senkouSpanB ? color.new(color.green, 85) : color.new(color.red, 85), title="Ichimoku Cloud")
+
+// 다이버전스 표시 (plot 제한으로 비활성화)
+// plotshape(showDivergence and bullishDivergence, style=shape.labelup, location=location.belowbar, color=color.new(color.green, 20), text="DIV+", textcolor=color.white, size=size.tiny, title="Bullish Div", offset=-pivotRight)
+// plotshape(showDivergence and bearishDivergence, style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 20), text="DIV-", textcolor=color.white, size=size.tiny, title="Bearish Div", offset=-pivotRight)
+
+// ============================================
+// 심리적 구간 시각화
+// ============================================
+
+// 라운드 넘버 라인
+var line roundBelowLine = na
+var line roundAboveLine = na
+var label roundBelowLabel = na
+var label roundAboveLabel = na
+
+if showPsychLevels and showRoundNumbers and barstate.islast
+    if not na(roundBelowLine)
+        line.delete(roundBelowLine)
+    if not na(roundAboveLine)
+        line.delete(roundAboveLine)
+    if not na(roundBelowLabel)
+        label.delete(roundBelowLabel)
+    if not na(roundAboveLabel)
+        label.delete(roundAboveLabel)
+
+    roundBelowLine := line.new(bar_index - 50, roundBelow, bar_index + 10, roundBelow, color=color.new(color.blue, 50), width=2, style=line.style_dotted)
+    roundAboveLine := line.new(bar_index - 50, roundAbove, bar_index + 10, roundAbove, color=color.new(color.blue, 50), width=2, style=line.style_dotted)
+    roundBelowLabel := label.new(bar_index + 12, roundBelow, "📍$" + str.tostring(roundBelow, "#"), style=label.style_label_left, color=color.new(color.blue, 70), textcolor=color.white, size=size.tiny)
+    roundAboveLabel := label.new(bar_index + 12, roundAbove, "📍$" + str.tostring(roundAbove, "#"), style=label.style_label_left, color=color.new(color.blue, 70), textcolor=color.white, size=size.tiny)
+
+// 피보나치 레벨 라인
+var line fib382Line = na
+var line fib500Line = na
+var line fib618Line = na
+
+if showPsychLevels and showFibLevels and barstate.islast
+    if not na(fib382Line)
+        line.delete(fib382Line)
+    if not na(fib500Line)
+        line.delete(fib500Line)
+    if not na(fib618Line)
+        line.delete(fib618Line)
+
+    fib382Line := line.new(bar_index - 50, fib382, bar_index + 10, fib382, color=color.new(color.yellow, 20), width=2, style=line.style_dashed)
+    fib500Line := line.new(bar_index - 50, fib500, bar_index + 10, fib500, color=color.new(color.orange, 20), width=2, style=line.style_dashed)
+    fib618Line := line.new(bar_index - 50, fib618, bar_index + 10, fib618, color=color.new(color.red, 20), width=2, style=line.style_dashed)
+
+// 주요 고점/저점 (심리적 지지/저항)
+var line keyHighLine = na
+var line keyLowLine = na
+var line prevKeyHighLine = na
+var line prevKeyLowLine = na
+var label keyHighLabel = na
+var label keyLowLabel = na
+
+if showPsychLevels and showKeyLevels and barstate.islast
+    if not na(keyHighLine)
+        line.delete(keyHighLine)
+    if not na(keyLowLine)
+        line.delete(keyLowLine)
+    if not na(prevKeyHighLine)
+        line.delete(prevKeyHighLine)
+    if not na(prevKeyLowLine)
+        line.delete(prevKeyLowLine)
+    if not na(keyHighLabel)
+        label.delete(keyHighLabel)
+    if not na(keyLowLabel)
+        label.delete(keyLowLabel)
+
+    if not na(lastPsychHigh)
+        keyHighLine := line.new(bar_index - 80, lastPsychHigh, bar_index + 10, lastPsychHigh, color=color.new(color.red, 30), width=2, style=line.style_solid)
+        keyHighLabel := label.new(bar_index + 12, lastPsychHigh, "🔺고점\n$" + str.tostring(lastPsychHigh, "#"), style=label.style_label_left, color=color.new(color.red, 50), textcolor=color.white, size=size.tiny)
+    if not na(lastPsychLow)
+        keyLowLine := line.new(bar_index - 80, lastPsychLow, bar_index + 10, lastPsychLow, color=color.new(color.green, 30), width=2, style=line.style_solid)
+        keyLowLabel := label.new(bar_index + 12, lastPsychLow, "🔻저점\n$" + str.tostring(lastPsychLow, "#"), style=label.style_label_left, color=color.new(color.green, 50), textcolor=color.white, size=size.tiny)
+    if not na(prevPsychHigh) and prevPsychHigh != lastPsychHigh
+        prevKeyHighLine := line.new(bar_index - 80, prevPsychHigh, bar_index + 10, prevPsychHigh, color=color.new(color.red, 60), width=1, style=line.style_dotted)
+    if not na(prevPsychLow) and prevPsychLow != lastPsychLow
+        prevKeyLowLine := line.new(bar_index - 80, prevPsychLow, bar_index + 10, prevPsychLow, color=color.new(color.green, 60), width=1, style=line.style_dotted)
+
+// POC (Point of Control) 라인
+var line pocLine = na
+var line hvnLine1 = na
+var line hvnLine2 = na
+var label pocLabel = na
+var box pocBox = na
+
+if showPsychLevels and showPOC and barstate.islast
+    if not na(pocLine)
+        line.delete(pocLine)
+    if not na(hvnLine1)
+        line.delete(hvnLine1)
+    if not na(hvnLine2)
+        line.delete(hvnLine2)
+    if not na(pocLabel)
+        label.delete(pocLabel)
+    if not na(pocBox)
+        box.delete(pocBox)
+
+    if not na(pocPrice)
+        // POC 라인 (가장 거래량 많은 가격)
+        pocLine := line.new(bar_index - 80, pocPrice, bar_index + 10, pocPrice, color=color.new(color.yellow, 0), width=3, style=line.style_solid)
+        pocLabel := label.new(bar_index + 12, pocPrice, "⚡POC\n$" + str.tostring(pocPrice, "#"), style=label.style_label_left, color=color.new(color.yellow, 30), textcolor=color.black, size=size.tiny)
+        // POC 주변 박스 (거래량 집중 구간)
+        float boxHeight = priceStep * 2
+        pocBox := box.new(bar_index - 60, pocPrice + boxHeight, bar_index + 5, pocPrice - boxHeight, bgcolor=color.new(color.yellow, 85), border_color=color.new(color.yellow, 50), border_width=1)
+
+// 공포/탐욕 배경색 (극단적 구간만)
+bgcolor(showPsychLevels and showFearGreed and extremeFear ? color.new(color.green, 85) : na, title="극단적 공포")
+bgcolor(showPsychLevels and showFearGreed and extremeGreed ? color.new(color.red, 85) : na, title="극단적 탐욕")
+
+// 심리적 매수/매도 구간 마커 (plot 제한으로 비활성화)
+// plotshape(showPsychLevels and psychBuyZone and not extremeFear, style=shape.diamond, location=location.belowbar, color=color.new(color.teal, 30), size=size.tiny, title="심리적 매수 구간")
+// plotshape(showPsychLevels and psychSellZone and not extremeGreed, style=shape.diamond, location=location.abovebar, color=color.new(color.maroon, 30), size=size.tiny, title="심리적 매도 구간")
+
+// 라운드 넘버 근처 알림 (plot 제한으로 비활성화)
+// plotshape(showPsychLevels and showRoundNumbers and atRoundNumber, style=shape.circle, location=location.belowbar, color=color.new(color.blue, 50), size=size.tiny, title="라운드 넘버")
+
+// 3일 지지/저항 라인
+var line sup3dLine = na
+var line res3dLine = na
+var label sup3dLabel = na
+var label res3dLabel = na
+
+if showSR and barstate.islast
+    if not na(sup3dLine)
+        line.delete(sup3dLine)
+    if not na(res3dLine)
+        line.delete(res3dLine)
+    if not na(sup3dLabel)
+        label.delete(sup3dLabel)
+    if not na(res3dLabel)
+        label.delete(res3dLabel)
+
+    sup3dLine := line.new(bar_index - 100, support3d, bar_index + 10, support3d, color=color.green, width=3, style=line.style_solid)
+    res3dLine := line.new(bar_index - 100, resistance3d, bar_index + 10, resistance3d, color=color.red, width=3, style=line.style_solid)
+    sup3dLabel := label.new(bar_index + 12, support3d, "3D SUP\n" + str.tostring(support3d, "#.#"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
+    res3dLabel := label.new(bar_index + 12, resistance3d, "3D RES\n" + str.tostring(resistance3d, "#.#"), style=label.style_label_left, color=color.red, textcolor=color.white, size=size.small)
+
+// 메인 시그널 (핵심만 표시)
+// SUPER LONG: 🚀 로켓 - 가장 확실한 진입 구간
+plotshape(showVisuals and showSuperLong, style=shape.labelup, location=location.belowbar, color=color.new(color.aqua, 0), text="🚀", textcolor=color.white, size=size.huge, title="SUPER LONG")
+// STRONG LONG: ⭐ 별 - 강력한 진입 구간
+plotshape(showVisuals and showStrongLong, style=shape.labelup, location=location.belowbar, color=color.new(color.yellow, 0), text="⭐", textcolor=color.black, size=size.large, title="STRONG LONG")
+// LONG: 일반 삼각형 - 시그널 모드 "전체"일 때만 표시
+plotshape(showVisuals and showNormalLong and signalMode == "전체", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="LONG")
+
+// SHORT 시그널 (LONG과 유사한 등급)
+// SUPER SHORT: 💀 해골 - 가장 확실한 숏 구간
+plotshape(showVisuals and superShort, style=shape.labeldown, location=location.abovebar, color=color.new(color.fuchsia, 0), text="💀", textcolor=color.white, size=size.huge, title="SUPER SHORT")
+// STRONG SHORT: ⚠️ 경고 - 강력한 숏 구간
+plotshape(showVisuals and strongShort, style=shape.labeldown, location=location.abovebar, color=color.new(color.orange, 0), text="⚠️", textcolor=color.black, size=size.large, title="STRONG SHORT")
+// SHORT: 일반 삼각형 - 시그널 모드 "전체"일 때만 표시
+plotshape(showVisuals and normalShort and signalMode == "전체", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="SHORT")
+
+// 청산 시그널
+plotshape(showVisuals and exitLongSignal, style=shape.xcross, location=location.abovebar, color=color.red, size=size.normal, title="EXIT LONG")
+plotshape(showVisuals and exitShortSignal, style=shape.xcross, location=location.belowbar, color=color.green, size=size.normal, title="EXIT SHORT")
+plotshape(showVisuals and trailFlipToShort and not exitLongSignal, style=shape.circle, location=location.abovebar, color=color.orange, size=size.tiny, title="Trail Warning")
+
+// 고래 매수/매도 시그널
+// 고래 등급별 라벨 표시
+if showVisuals and showWhale and whaleBuy
+    label.new(bar_index, low, whaleStrength + "\nBUY", style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.small)
+
+if showVisuals and showWhale and whaleSell
+    label.new(bar_index, high, whaleStrength + "\nSELL", style=label.style_label_down, color=color.purple, textcolor=color.white, size=size.small)
+
+// ============================================
+// V40+ Liquidity Sweep 라벨 표시
+// ============================================
+if showVisuals and showLiqSweepLabel and liqSweepBullish
+    label.new(bar_index, low, "🔄 SWEEP\n↑ BUY", style=label.style_label_up, color=color.new(color.teal, 20), textcolor=color.white, size=size.normal)
+
+if showVisuals and showLiqSweepLabel and liqSweepBearish
+    label.new(bar_index, high, "🔄 SWEEP\n↓ SELL", style=label.style_label_down, color=color.new(color.maroon, 20), textcolor=color.white, size=size.normal)
+
+// 고래 배경색
+bgcolor(showWhale and whaleBuy ? color.new(color.blue, 85) : na)
+bgcolor(showWhale and whaleSell ? color.new(color.purple, 85) : na)
+
+// 배경색 (필터링 적용)
+bgcolor(showSuperLong ? color.new(color.aqua, 60) : na)
+bgcolor(showStrongLong ? color.new(color.yellow, 70) : na)
+bgcolor(gradeA and not strongLong and signalMode == "전체" ? color.new(color.lime, 85) : na)
+bgcolor(exitLongSignal ? color.new(color.red, 70) : na)
+
+// 스마트 OBV 배경색 (중심선 위=청록, 아래=노랑, 스퀴즈=회색)
+bgcolor(showSmartOBV and showSmartOBVBg and smartOBVSqueeze ? color.new(color.gray, 90) : na, title="스마트OBV 스퀴즈")
+bgcolor(showSmartOBV and showSmartOBVBg and not smartOBVSqueeze and smartOBVAboveCenter ? color.new(color.teal, 92) : na, title="스마트OBV 매수세")
+bgcolor(showSmartOBV and showSmartOBVBg and not smartOBVSqueeze and smartOBVBelowCenter ? color.new(color.orange, 92) : na, title="스마트OBV 매도세")
+
+// 스마트 OBV 크로스 신호 표시 (plot 제한으로 비활성화)
+// plotshape(showSmartOBV and smartOBVCrossUp and not smartOBVSqueeze, style=shape.circle, location=location.bottom, color=color.teal, size=size.tiny, title="스마트OBV 매수전환")
+// plotshape(showSmartOBV and smartOBVCrossDown and not smartOBVSqueeze, style=shape.circle, location=location.bottom, color=color.orange, size=size.tiny, title="스마트OBV 매도전환")
+
+// 스퀴즈 브레이크아웃 신호 (강력) (plot 제한으로 비활성화)
+// plotshape(showSmartOBV and squeezeBreakoutUp, style=shape.diamond, location=location.bottom, color=color.lime, size=size.small, title="스퀴즈 상승돌파")
+// plotshape(showSmartOBV and squeezeBreakoutDown, style=shape.diamond, location=location.bottom, color=color.red, size=size.small, title="스퀴즈 하락돌파")
+
+// ============================================
+// SMC 시각화
+// ============================================
+
+// Smart Trail 플롯
+plot(showSMC and showSmartTrail ? smartTrail : na, color=smartTrailUp ? color.lime : color.red, linewidth=2, style=plot.style_stepline_diamond, title="Smart Trail")
+
+// BOS/CHoCH 라벨
+if showSMC and showBOS and bosUp
+    label.new(bar_index, high, "BOS+", style=label.style_label_down, color=color.new(color.teal, 30), textcolor=color.white, size=size.tiny)
+
+if showSMC and showBOS and bosDn
+    label.new(bar_index, low, "BOS-", style=label.style_label_up, color=color.new(color.maroon, 30), textcolor=color.white, size=size.tiny)
+
+if showSMC and showBOS and chochUp
+    label.new(bar_index, high, "CHoCH+", style=label.style_label_down, color=color.lime, textcolor=color.black, size=size.small)
+
+if showSMC and showBOS and chochDn
+    label.new(bar_index, low, "CHoCH-", style=label.style_label_up, color=color.fuchsia, textcolor=color.white, size=size.small)
+
+// Liquidity Levels 라인 표시
+var line[] eqHighLines = array.new_line(0)
+var line[] eqLowLines = array.new_line(0)
+var label[] eqHighLabels = array.new_label(0)
+var label[] eqLowLabels = array.new_label(0)
+
+// Equal Highs 라인 그리기
+if showSMC and showLiquidityLevels and array.size(eqHighs) > 0
+    if array.size(eqHighLines) > 0
+        for i = 0 to array.size(eqHighLines) - 1
+            line.delete(array.get(eqHighLines, i))
+        array.clear(eqHighLines)
+    if array.size(eqHighLabels) > 0
+        for i = 0 to array.size(eqHighLabels) - 1
+            label.delete(array.get(eqHighLabels, i))
+        array.clear(eqHighLabels)
+    for i = 0 to array.size(eqHighs) - 1
+        float lvl = array.get(eqHighs, i)
+        int startBar = array.get(eqHighBars, i)
+        array.push(eqHighLines, line.new(startBar, lvl, bar_index + 20, lvl, color=color.new(color.orange, 40), width=2, style=line.style_dotted))
+        array.push(eqHighLabels, label.new(bar_index + 22, lvl, "EQH", style=label.style_label_left, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny))
+
+// Equal Lows 라인 그리기
+if showSMC and showLiquidityLevels and array.size(eqLows) > 0
+    if array.size(eqLowLines) > 0
+        for i = 0 to array.size(eqLowLines) - 1
+            line.delete(array.get(eqLowLines, i))
+        array.clear(eqLowLines)
+    if array.size(eqLowLabels) > 0
+        for i = 0 to array.size(eqLowLabels) - 1
+            label.delete(array.get(eqLowLabels, i))
+        array.clear(eqLowLabels)
+    for i = 0 to array.size(eqLows) - 1
+        float lvl = array.get(eqLows, i)
+        int startBar = array.get(eqLowBars, i)
+        array.push(eqLowLines, line.new(startBar, lvl, bar_index + 20, lvl, color=color.new(color.purple, 40), width=2, style=line.style_dotted))
+        array.push(eqLowLabels, label.new(bar_index + 22, lvl, "EQL", style=label.style_label_left, color=color.new(color.purple, 50), textcolor=color.white, size=size.tiny))
+
+// ============================================
+// 청산 매물대 (Liquidation Levels) 시각화
+// ============================================
+
+var line[] liqLongLines = array.new_line(0)
+var line[] liqShortLines = array.new_line(0)
+var label[] liqLabelsArr = array.new_label(0)
+
+// 청산 레벨 라인 그리기 (마지막 봉에서만)
+if enableLiqLevels and barstate.islast
+    // 기존 라인/라벨 삭제
+    if array.size(liqLongLines) > 0
+        for i = 0 to array.size(liqLongLines) - 1
+            line.delete(array.get(liqLongLines, i))
+        array.clear(liqLongLines)
+    if array.size(liqShortLines) > 0
+        for i = 0 to array.size(liqShortLines) - 1
+            line.delete(array.get(liqShortLines, i))
+        array.clear(liqShortLines)
+    if array.size(liqLabelsArr) > 0
+        for i = 0 to array.size(liqLabelsArr) - 1
+            label.delete(array.get(liqLabelsArr, i))
+        array.clear(liqLabelsArr)
+
+    // 롱 청산 레벨 (빨간색 - 가격 하락 시 청산)
+    if showLongLiq
+        if liqShow10x
+            array.push(liqLongLines, line.new(bar_index - 30, liqLong10x, bar_index + 10, liqLong10x, color=color.new(color.red, 60), style=line.style_dotted, width=1))
+            if showLiqLabels
+                array.push(liqLabelsArr, label.new(bar_index + 12, liqLong10x, "L10x", style=label.style_label_left, color=color.new(color.red, 80), textcolor=color.red, size=size.tiny))
+        if liqShow25x
+            array.push(liqLongLines, line.new(bar_index - 30, liqLong25x, bar_index + 10, liqLong25x, color=color.new(color.red, 50), style=line.style_dashed, width=1))
+            if showLiqLabels
+                array.push(liqLabelsArr, label.new(bar_index + 12, liqLong25x, "L25x", style=label.style_label_left, color=color.new(color.red, 80), textcolor=color.red, size=size.tiny))
+        if liqShow50x
+            liqColor50 = showLiqHighRisk ? color.new(color.orange, 30) : color.new(color.red, 40)
+            array.push(liqLongLines, line.new(bar_index - 30, liqLong50x, bar_index + 10, liqLong50x, color=liqColor50, style=line.style_solid, width=2))
+            if showLiqLabels
+                array.push(liqLabelsArr, label.new(bar_index + 12, liqLong50x, "L50x⚠", style=label.style_label_left, color=color.new(color.orange, 70), textcolor=color.orange, size=size.small))
+        if liqShow100x
+            liqColor100 = showLiqHighRisk ? color.new(color.red, 0) : color.new(color.red, 30)
+            array.push(liqLongLines, line.new(bar_index - 30, liqLong100x, bar_index + 10, liqLong100x, color=liqColor100, style=line.style_solid, width=3))
+            if showLiqLabels
+                array.push(liqLabelsArr, label.new(bar_index + 12, liqLong100x, "L100x🔥", style=label.style_label_left, color=color.new(color.red, 60), textcolor=color.red, size=size.normal))
+
+    // 숏 청산 레벨 (초록색 - 가격 상승 시 청산)
+    if showShortLiq
+        if liqShow10x
+            array.push(liqShortLines, line.new(bar_index - 30, liqShort10x, bar_index + 10, liqShort10x, color=color.new(color.green, 60), style=line.style_dotted, width=1))
+            if showLiqLabels
+                array.push(liqLabelsArr, label.new(bar_index + 12, liqShort10x, "S10x", style=label.style_label_left, color=color.new(color.green, 80), textcolor=color.green, size=size.tiny))
+        if liqShow25x
+            array.push(liqShortLines, line.new(bar_index - 30, liqShort25x, bar_index + 10, liqShort25x, color=color.new(color.green, 50), style=line.style_dashed, width=1))
+            if showLiqLabels
+                array.push(liqLabelsArr, label.new(bar_index + 12, liqShort25x, "S25x", style=label.style_label_left, color=color.new(color.green, 80), textcolor=color.green, size=size.tiny))
+        if liqShow50x
+            liqColorS50 = showLiqHighRisk ? color.new(color.teal, 30) : color.new(color.green, 40)
+            array.push(liqShortLines, line.new(bar_index - 30, liqShort50x, bar_index + 10, liqShort50x, color=liqColorS50, style=line.style_solid, width=2))
+            if showLiqLabels
+                array.push(liqLabelsArr, label.new(bar_index + 12, liqShort50x, "S50x⚠", style=label.style_label_left, color=color.new(color.teal, 70), textcolor=color.teal, size=size.small))
+        if liqShow100x
+            liqColorS100 = showLiqHighRisk ? color.new(color.green, 0) : color.new(color.green, 30)
+            array.push(liqShortLines, line.new(bar_index - 30, liqShort100x, bar_index + 10, liqShort100x, color=liqColorS100, style=line.style_solid, width=3))
+            if showLiqLabels
+                array.push(liqLabelsArr, label.new(bar_index + 12, liqShort100x, "S100x🔥", style=label.style_label_left, color=color.new(color.green, 60), textcolor=color.green, size=size.normal))
+
+// 청산 스윕 마커 (plot 제한으로 비활성화 - 알람으로 대체)
+// plotshape(enableLiqLevels and longLiq100xSweep, title="100x 롱청산 스윕", location=location.belowbar, color=color.red, style=shape.triangleup, size=size.normal, text="LIQ\nSWEEP")
+// plotshape(enableLiqLevels and longLiq50xSweep and not longLiq100xSweep, title="50x 롱청산 스윕", location=location.belowbar, color=color.orange, style=shape.triangleup, size=size.small, text="50x")
+// plotshape(enableLiqLevels and shortLiq100xSweep, title="100x 숏청산 스윕", location=location.abovebar, color=color.green, style=shape.triangledown, size=size.normal, text="LIQ\nSWEEP")
+// plotshape(enableLiqLevels and shortLiq50xSweep and not shortLiq100xSweep, title="50x 숏청산 스윕", location=location.abovebar, color=color.teal, style=shape.triangledown, size=size.small, text="50x")
+
+// ============================================
+// 실제 청산 매물대 시각화 (Coinglass 기반 고정 레벨)
+// ============================================
+
+var line[] realLongLiqLines = array.new_line(0)
+var line[] realShortLiqLines = array.new_line(0)
+var label[] realLiqLabelsArr = array.new_label(0)
+
+// 실제 청산 매물대 라인 그리기 (고정 - 움직이지 않음)
+if enableRealLiqLevels and barstate.islast
+    // 기존 라인/라벨 삭제
+    if array.size(realLongLiqLines) > 0
+        for i = 0 to array.size(realLongLiqLines) - 1
+            line.delete(array.get(realLongLiqLines, i))
+        array.clear(realLongLiqLines)
+    if array.size(realShortLiqLines) > 0
+        for i = 0 to array.size(realShortLiqLines) - 1
+            line.delete(array.get(realShortLiqLines, i))
+        array.clear(realShortLiqLines)
+    if array.size(realLiqLabelsArr) > 0
+        for i = 0 to array.size(realLiqLabelsArr) - 1
+            label.delete(array.get(realLiqLabelsArr, i))
+        array.clear(realLiqLabelsArr)
+
+    // 롱 청산 집중 구간 (빨간 굵은 선 - 가격 하락 시 대량 청산)
+    if realLongLiq1Enable and realLongLiq1 > 0
+        array.push(realLongLiqLines, line.new(bar_index - 100, realLongLiq1, bar_index + 20, realLongLiq1, color=realLongLiqColor, style=line.style_solid, width=3))
+        if showRealLiqLabels
+            array.push(realLiqLabelsArr, label.new(bar_index + 22, realLongLiq1, "🔴 " + realLongLiq1Label + "\n$" + str.tostring(realLongLiq1, "#"), style=label.style_label_left, color=color.new(color.red, 60), textcolor=color.white, size=size.normal))
+
+    if realLongLiq2Enable and realLongLiq2 > 0
+        array.push(realLongLiqLines, line.new(bar_index - 100, realLongLiq2, bar_index + 20, realLongLiq2, color=realLongLiqColor, style=line.style_dashed, width=2))
+        if showRealLiqLabels
+            array.push(realLiqLabelsArr, label.new(bar_index + 22, realLongLiq2, "🔴 " + realLongLiq2Label + "\n$" + str.tostring(realLongLiq2, "#"), style=label.style_label_left, color=color.new(color.red, 70), textcolor=color.white, size=size.small))
+
+    if realLongLiq3Enable and realLongLiq3 > 0
+        array.push(realLongLiqLines, line.new(bar_index - 100, realLongLiq3, bar_index + 20, realLongLiq3, color=realLongLiqColor, style=line.style_dotted, width=2))
+        if showRealLiqLabels
+            array.push(realLiqLabelsArr, label.new(bar_index + 22, realLongLiq3, "🔴 " + realLongLiq3Label, style=label.style_label_left, color=color.new(color.red, 80), textcolor=color.white, size=size.tiny))
+
+    // 숏 청산 집중 구간 (초록 굵은 선 - 가격 상승 시 대량 청산)
+    if realShortLiq1Enable and realShortLiq1 > 0
+        array.push(realShortLiqLines, line.new(bar_index - 100, realShortLiq1, bar_index + 20, realShortLiq1, color=realShortLiqColor, style=line.style_solid, width=3))
+        if showRealLiqLabels
+            array.push(realLiqLabelsArr, label.new(bar_index + 22, realShortLiq1, "🟢 " + realShortLiq1Label + "\n$" + str.tostring(realShortLiq1, "#"), style=label.style_label_left, color=color.new(color.green, 60), textcolor=color.white, size=size.normal))
+
+    if realShortLiq2Enable and realShortLiq2 > 0
+        array.push(realShortLiqLines, line.new(bar_index - 100, realShortLiq2, bar_index + 20, realShortLiq2, color=realShortLiqColor, style=line.style_dashed, width=2))
+        if showRealLiqLabels
+            array.push(realLiqLabelsArr, label.new(bar_index + 22, realShortLiq2, "🟢 " + realShortLiq2Label + "\n$" + str.tostring(realShortLiq2, "#"), style=label.style_label_left, color=color.new(color.green, 70), textcolor=color.white, size=size.small))
+
+    if realShortLiq3Enable and realShortLiq3 > 0
+        array.push(realShortLiqLines, line.new(bar_index - 100, realShortLiq3, bar_index + 20, realShortLiq3, color=realShortLiqColor, style=line.style_dotted, width=2))
+        if showRealLiqLabels
+            array.push(realLiqLabelsArr, label.new(bar_index + 22, realShortLiq3, "🟢 " + realShortLiq3Label, style=label.style_label_left, color=color.new(color.green, 80), textcolor=color.white, size=size.tiny))
+
+// 실제 청산 매물대 도달 감지
+bool nearRealLongLiq1 = realLongLiq1Enable and math.abs(close - realLongLiq1) / close * 100 < 1
+bool nearRealLongLiq2 = realLongLiq2Enable and math.abs(close - realLongLiq2) / close * 100 < 1
+bool nearRealShortLiq1 = realShortLiq1Enable and math.abs(close - realShortLiq1) / close * 100 < 1
+bool nearRealShortLiq2 = realShortLiq2Enable and math.abs(close - realShortLiq2) / close * 100 < 1
+
+// 실제 청산 매물대 돌파 후 반전 감지 (스윕) - 쿨다운 적용
+// 조건: 이전 봉에서 레벨 위에 있었는데 → 현재 봉에서 레벨 아래로 갔다가 → 다시 레벨 위로 마감
+bool realLongLiqSweep1Raw = realLongLiq1Enable and low < realLongLiq1 and close > realLongLiq1 and close[1] > realLongLiq1
+bool realLongLiqSweep2Raw = realLongLiq2Enable and low < realLongLiq2 and close > realLongLiq2 and close[1] > realLongLiq2
+bool realShortLiqSweep1Raw = realShortLiq1Enable and high > realShortLiq1 and close < realShortLiq1 and close[1] < realShortLiq1
+bool realShortLiqSweep2Raw = realShortLiq2Enable and high > realShortLiq2 and close < realShortLiq2 and close[1] < realShortLiq2
+
+// 쿨다운 적용 (20봉 = 약 5시간 in 15분봉)
+var int lastRealLongLiqBar = 0
+var int lastRealShortLiqBar = 0
+int realLiqCooldown = 20
+
+bool realLongLiqSweep1 = realLongLiqSweep1Raw and (bar_index - lastRealLongLiqBar > realLiqCooldown)
+bool realLongLiqSweep2 = realLongLiqSweep2Raw and (bar_index - lastRealLongLiqBar > realLiqCooldown)
+bool realShortLiqSweep1 = realShortLiqSweep1Raw and (bar_index - lastRealShortLiqBar > realLiqCooldown)
+bool realShortLiqSweep2 = realShortLiqSweep2Raw and (bar_index - lastRealShortLiqBar > realLiqCooldown)
+
+// 쿨다운 업데이트
+if realLongLiqSweep1 or realLongLiqSweep2
+    lastRealLongLiqBar := bar_index
+if realShortLiqSweep1 or realShortLiqSweep2
+    lastRealShortLiqBar := bar_index
+
+// 실제 청산 스윕 마커 (plot 제한으로 비활성화 - 알람으로 대체)
+// plotshape(enableRealLiqLevels and realLongLiqSweep1, title="롱 대량청산 스윕", location=location.belowbar, color=#FF5252, style=shape.labelup, size=size.normal, text="💀 LONG LIQ")
+// plotshape(enableRealLiqLevels and realShortLiqSweep1, title="숏 대량청산 스윕", location=location.abovebar, color=#4CAF50, style=shape.labeldown, size=size.normal, text="💀 SHORT LIQ")
+
+// Premium/Discount Zone 표시 (plot 제한으로 비활성화)
+// plot(showSMC ? premiumZone : na, color=color.new(color.red, 70), linewidth=1, style=plot.style_linebr, title="Premium Zone")
+// plot(showSMC ? discountZone : na, color=color.new(color.green, 70), linewidth=1, style=plot.style_linebr, title="Discount Zone")
+// plot(showSMC ? rangeMid : na, color=color.new(color.gray, 80), linewidth=1, style=plot.style_linebr, title="Range Mid")
+
+// ============================================
+// 시그널 라벨
+// ============================================
+
+if showSignalLabel and superLong
+    string t1 = "***** SUPER [" + finalGrade + "] " + str.tostring(longScore, "#") + "pt *****"
+    string t2 = "MTF + SMC + Smart Trail 일치!"
+    string t3 = "추세: " + trendStrength + " (" + str.tostring(trendScore) + "/14)"
+    string t4 = "TF: " + str.tostring(uptrendCount) + "/4 EMA:" + str.tostring(emaAlignedUpCount) + "/5"
+    string t5 = "SMC: " + (isBullishOB ? "OB+" : "") + (isBullishFVG ? " FVG+" : "") + (chochUp ? " CHoCH+" : "")
+    string t6 = "Zone: " + (inDiscount ? "DISCOUNT" : "MID") + " Trail: LONG"
+    string lblText = t1 + "\n" + t2 + "\n" + t3 + "\n" + t4 + "\n" + t5 + "\n" + t6
+    label.new(bar_index, low, lblText, style=label.style_label_up, color=color.aqua, textcolor=color.black, size=size.large)
+
+if showSignalLabel and strongLong and not superLong
+    string t1 = "*** STRONG [" + currentGrade + "] " + str.tostring(longScore, "#") + "pt ***"
+    string t2 = highConfidenceLong ? confReason : ""
+    string t3 = "추세: " + trendStrength + " (" + str.tostring(trendScore) + "/14)"
+    string t4 = "TF: " + str.tostring(uptrendCount) + "/4 EMA:" + str.tostring(emaAlignedUpCount) + "/5 MACD:" + str.tostring(macdBullCount) + "/5"
+    string t5 = "위치: " + str.tostring(pricePosition, "#") + "% ADX:" + str.tostring(adxValue, "#")
+    string v15 = tf15m_volSpike ? str.tostring(tf15m_volRatio, "#.#") : "-"
+    string v1h = tf1h_volSpike ? str.tostring(tf1h_volRatio, "#.#") : "-"
+    string v4h = tf4h_volSpike ? str.tostring(tf4h_volRatio, "#.#") : "-"
+    string t6 = "Vol[15m:" + v15 + " 1H:" + v1h + " 4H:" + v4h + "]"
+    string lblText = t1 + (t2 != "" ? "\n" + t2 : "") + "\n" + t3 + "\n" + t4 + "\n" + t5 + "\n" + t6
+    label.new(bar_index, low, lblText, style=label.style_label_up, color=color.yellow, textcolor=color.black, size=size.normal)
+
+if showSignalLabel and normalLong
+    string t1 = "LONG [" + currentGrade + "] " + str.tostring(longScore, "#") + "pt"
+    string t2 = "추세:" + trendStrength + " TF:" + str.tostring(uptrendCount) + "/4"
+    string t3 = "EMA:" + str.tostring(emaAlignedUpCount) + "/5 MACD:" + str.tostring(macdBullCount) + "/5"
+    string t4 = "Vol:" + str.tostring(volRatio, "#.#") + "x"
+    string lblText = t1 + "\n" + t2 + "\n" + t3 + "\n" + t4
+    label.new(bar_index, low, lblText, style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+
+// ============================================
+// 정보 테이블 (거래량 배수 포함)
+// ============================================
+
+if showInfoTable
+    var table infoTbl = table.new(position.top_right, 5, 21, bgcolor=color.new(color.white, 5), border_width=1)
+
+    if barstate.islast
+        table.clear(infoTbl, 0, 0, 4, 20)
+
+        // 헤더 + 모드 표시
+        string modeText = tradeMode == "선물" ? "F" : tradeMode == "현물" ? "S" : "K"  // Futures/Spot/stocK
+        table.cell(infoTbl, 0, 0, "V39 [" + modeText + "]", text_color=color.white, bgcolor=color.blue, text_size=size.small)
+        table.cell(infoTbl, 1, 0, "추세", text_color=color.white, bgcolor=color.blue, text_size=size.small)
+        table.cell(infoTbl, 2, 0, "EMA", text_color=color.white, bgcolor=color.blue, text_size=size.small)
+        table.cell(infoTbl, 3, 0, "MACD", text_color=color.white, bgcolor=color.blue, text_size=size.small)
+        table.cell(infoTbl, 4, 0, "Vol", text_color=color.white, bgcolor=color.blue, text_size=size.small)
+
+        // 현재TF
+        string curTFVol = str.tostring(volRatio, "#.#") + "x"
+        color curVolColor = volumeExplosion ? color.lime : volSpike ? color.green : color.gray
+        string curEma = emaAlignedUp ? "UP!" : emaAlignedDown ? "DN!" : ema8 > ema21 ? "up" : "dn"
+        color curEmaColor = emaAlignedUp ? color.lime : emaAlignedDown ? color.fuchsia : ema8 > ema21 ? color.green : color.red
+        table.cell(infoTbl, 0, 1, timeframe.period, text_color=color.blue, text_size=size.tiny)
+        table.cell(infoTbl, 1, 1, ema8 > ema21 ? "UP" : "DN", text_color=ema8 > ema21 ? color.green : color.red, text_size=size.tiny)
+        table.cell(infoTbl, 2, 1, curEma, text_color=curEmaColor, text_size=size.tiny)
+        table.cell(infoTbl, 3, 1, macdBullish ? "BULL" : "BEAR", text_color=macdBullish ? color.green : color.red, text_size=size.tiny)
+        table.cell(infoTbl, 4, 1, curTFVol, text_color=curVolColor, text_size=size.tiny)
+
+        // 15분 (5분봉 제거됨)
+        string vol15mTxt = str.tostring(tf15m_volRatio, "#.#") + "x"
+        color vol15mColor = tf15m_volRatio >= volHighThreshold ? color.lime : tf15m_volSpike ? color.green : color.gray
+        string ema15m = tf15m_emaAligned ? "UP!" : tf15m_emaAlignedDn ? "DN!" : tf15m_uptrend ? "up" : tf15m_downtrend ? "dn" : "-"
+        color ema15mColor = tf15m_emaAligned ? color.lime : tf15m_emaAlignedDn ? color.fuchsia : tf15m_uptrend ? color.green : tf15m_downtrend ? color.red : color.gray
+        table.cell(infoTbl, 0, 2, "15m", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 2, tf15m_uptrend ? "UP" : tf15m_downtrend ? "DN" : "-", text_color=tf15m_uptrend ? color.green : tf15m_downtrend ? color.red : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 2, ema15m, text_color=ema15mColor, text_size=size.tiny)
+        table.cell(infoTbl, 3, 2, tf15m_macdBull ? "BULL" : "BEAR", text_color=tf15m_macdBull ? color.green : color.red, text_size=size.tiny)
+        table.cell(infoTbl, 4, 2, vol15mTxt, text_color=vol15mColor, text_size=size.tiny)
+
+        // 1시간
+        string vol1hTxt = str.tostring(tf1h_volRatio, "#.#") + "x"
+        color vol1hColor = tf1h_volRatio >= volHighThreshold ? color.lime : tf1h_volSpike ? color.green : color.gray
+        string ema1h = tf1h_emaAligned ? "UP!" : tf1h_emaAlignedDn ? "DN!" : tf1h_uptrend ? "up" : tf1h_downtrend ? "dn" : "-"
+        color ema1hColor = tf1h_emaAligned ? color.lime : tf1h_emaAlignedDn ? color.fuchsia : tf1h_uptrend ? color.green : tf1h_downtrend ? color.red : color.gray
+        table.cell(infoTbl, 0, 3, "1H", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 3, tf1h_uptrend ? "UP" : tf1h_downtrend ? "DN" : "-", text_color=tf1h_uptrend ? color.green : tf1h_downtrend ? color.red : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 3, ema1h, text_color=ema1hColor, text_size=size.tiny)
+        table.cell(infoTbl, 3, 3, tf1h_macdBull ? "BULL" : "BEAR", text_color=tf1h_macdBull ? color.green : color.red, text_size=size.tiny)
+        table.cell(infoTbl, 4, 3, vol1hTxt, text_color=vol1hColor, text_size=size.tiny)
+
+        // 4시간
+        string vol4hTxt = str.tostring(tf4h_volRatio, "#.#") + "x"
+        color vol4hColor = tf4h_volRatio >= volHighThreshold ? color.lime : tf4h_volSpike ? color.green : color.gray
+        string ema4h = tf4h_emaAligned ? "UP!" : tf4h_emaAlignedDn ? "DN!" : tf4h_uptrend ? "up" : tf4h_downtrend ? "dn" : "-"
+        color ema4hColor = tf4h_emaAligned ? color.lime : tf4h_emaAlignedDn ? color.fuchsia : tf4h_uptrend ? color.green : tf4h_downtrend ? color.red : color.gray
+        table.cell(infoTbl, 0, 4, "4H", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 4, tf4h_uptrend ? "UP" : tf4h_downtrend ? "DN" : "-", text_color=tf4h_uptrend ? color.green : tf4h_downtrend ? color.red : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 4, ema4h, text_color=ema4hColor, text_size=size.tiny)
+        table.cell(infoTbl, 3, 4, tf4h_macdBull ? "BULL" : "BEAR", text_color=tf4h_macdBull ? color.green : color.red, text_size=size.tiny)
+        table.cell(infoTbl, 4, 4, vol4hTxt, text_color=vol4hColor, text_size=size.tiny)
+
+        // 일봉
+        string emaD = tfD_emaAligned ? "UP!" : tfD_emaAlignedDn ? "DN!" : tfD_uptrend ? "up" : tfD_downtrend ? "dn" : "-"
+        color emaDColor = tfD_emaAligned ? color.lime : tfD_emaAlignedDn ? color.fuchsia : tfD_uptrend ? color.green : tfD_downtrend ? color.red : color.gray
+        table.cell(infoTbl, 0, 5, "1D", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 5, tfD_uptrend ? "UP" : tfD_downtrend ? "DN" : "-", text_color=tfD_uptrend ? color.green : tfD_downtrend ? color.red : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 5, emaD, text_color=emaDColor, text_size=size.tiny)
+        table.cell(infoTbl, 3, 5, tfD_macdBull ? "BULL" : "BEAR", text_color=tfD_macdBull ? color.green : color.red, text_size=size.tiny)
+        table.cell(infoTbl, 4, 5, "-", text_color=color.gray, text_size=size.tiny)
+
+        // 구분선
+        table.cell(infoTbl, 0, 6, "---", text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 1, 6, "---", text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 6, "---", text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 3, 6, "---", text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 4, 6, "---", text_color=color.gray, text_size=size.tiny)
+
+        // 추세 종합
+        color trendScoreColor = trendScore >= 12 ? color.lime : trendScore >= 10 ? color.green : trendScore >= 7 ? color.orange : trendScore >= 5 ? color.gray : color.red
+        table.cell(infoTbl, 0, 7, "추세강도", text_color=color.white, bgcolor=color.teal, text_size=size.tiny)
+        table.cell(infoTbl, 1, 7, trendStrength, text_color=trendScoreColor, text_size=size.tiny)
+        table.cell(infoTbl, 2, 7, str.tostring(trendScore) + "/14", text_color=trendScoreColor, text_size=size.tiny)
+        table.cell(infoTbl, 3, 7, "", text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 4, 7, "", text_color=color.gray, text_size=size.tiny)
+
+        // 상세 카운트
+        table.cell(infoTbl, 0, 8, "TF일치", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 8, str.tostring(uptrendCount) + "/4", text_color=uptrendCount >= 3 ? color.green : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 8, "EMA정렬", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 3, 8, str.tostring(emaAlignedUpCount) + "/5", text_color=emaAlignedUpCount >= 3 ? color.green : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 4, 8, emaAlignedUpCount >= 4 ? "!!" : "", text_color=color.lime, text_size=size.tiny)
+
+        table.cell(infoTbl, 0, 9, "MACD일치", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 9, str.tostring(macdBullCount) + "/5", text_color=macdBullCount >= 4 ? color.green : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 9, "Vol급증", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 3, 9, str.tostring(volSpikeCount) + "/4", text_color=volSpikeCount >= 2 ? color.green : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 4, 9, multiTFVolume ? "MTF!" : "", text_color=color.lime, text_size=size.tiny)
+
+        // 위치/매수압력
+        table.cell(infoTbl, 0, 10, "위치", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 10, str.tostring(pricePosition, "#") + "%", text_color=nearSupport3d ? color.green : nearResistance3d ? color.red : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 10, atSupport3d ? "SUP!" : atResistance3d ? "RES!" : "", text_color=atSupport3d ? color.lime : color.fuchsia, text_size=size.tiny)
+        table.cell(infoTbl, 3, 10, "Buy%", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 4, 10, str.tostring(buyPressure, "#") + "%", text_color=buyPressure > 55 ? color.green : buyPressure < 45 ? color.red : color.gray, text_size=size.tiny)
+
+        // RSI/Stoch
+        table.cell(infoTbl, 0, 11, "RSI", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 11, str.tostring(rsi, "#"), text_color=rsiOversold ? color.green : rsiOverbought ? color.red : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 11, stochOversold ? "OS!" : stochOverbought ? "OB!" : "", text_color=stochOversold ? color.lime : color.fuchsia, text_size=size.tiny)
+        table.cell(infoTbl, 3, 11, "Stoch", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 4, 11, str.tostring(stochK, "#"), text_color=stochOversold ? color.green : stochOverbought ? color.red : color.gray, text_size=size.tiny)
+
+        // ADX
+        table.cell(infoTbl, 0, 12, "ADX", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 12, str.tostring(adxValue, "#"), text_color=trendStrong ? color.green : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 12, trendStrong ? "STRONG" : "WEAK", text_color=trendStrong ? color.lime : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 3, 12, "DI", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 4, 12, bullishDI ? "+DI" : "-DI", text_color=bullishDI ? color.green : color.red, text_size=size.tiny)
+
+        // BB
+        table.cell(infoTbl, 0, 13, "BB", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 13, touchBBLower ? "하단!" : touchBBUpper ? "상단!" : close > bbBasis ? "중앙↑" : "중앙↓", text_color=touchBBLower ? color.lime : touchBBUpper ? color.fuchsia : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 13, bullishDivergence ? "DIV+" : bearishDivergence ? "DIV-" : "", text_color=bullishDivergence ? color.lime : bearishDivergence ? color.fuchsia : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 3, 13, "", text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 4, 13, "", text_color=color.gray, text_size=size.tiny)
+
+        // 점수
+        table.cell(infoTbl, 0, 14, "점수", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 14, str.tostring(longScore, "#") + "/30", text_color=longScore >= 20 ? color.lime : longScore >= 15 ? color.green : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 14, highConfidenceLong ? "HC!" : "", text_color=color.yellow, text_size=size.tiny)
+        table.cell(infoTbl, 3, 14, "확신", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 4, 14, confReason, text_color=highConfidenceLong ? color.yellow : color.gray, text_size=size.tiny)
+
+        // SMC 정보
+        string smcOB = isBullishOB ? "OB+" : isBearishOB ? "OB-" : "-"
+        color smcOBColor = isBullishOB ? color.lime : isBearishOB ? color.red : color.gray
+        string smcFVG = isBullishFVG ? "FVG+" : isBearishFVG ? "FVG-" : "-"
+        color smcFVGColor = isBullishFVG ? color.teal : isBearishFVG ? color.maroon : color.gray
+        string smcBOS = chochUp ? "CHoCH+" : chochDn ? "CHoCH-" : bosUp ? "BOS+" : bosDn ? "BOS-" : "-"
+        color smcBOSColor = chochUp or bosUp ? color.lime : chochDn or bosDn ? color.red : color.gray
+        string smcZone = inPremium ? "PREMIUM" : inDiscount ? "DISCOUNT" : "MID"
+        color smcZoneColor = inDiscount ? color.green : inPremium ? color.red : color.gray
+        string smcTrail = smartTrailUp ? "LONG" : "SHORT"
+        color smcTrailColor = smartTrailUp ? color.lime : color.fuchsia
+
+        table.cell(infoTbl, 0, 15, "SMC", text_color=color.white, bgcolor=color.purple, text_size=size.tiny)
+        table.cell(infoTbl, 1, 15, smcOB, text_color=smcOBColor, text_size=size.tiny)
+        table.cell(infoTbl, 2, 15, smcFVG, text_color=smcFVGColor, text_size=size.tiny)
+        table.cell(infoTbl, 3, 15, smcBOS, text_color=smcBOSColor, text_size=size.tiny)
+        table.cell(infoTbl, 4, 15, smcTrail, text_color=smcTrailColor, text_size=size.tiny)
+
+        table.cell(infoTbl, 0, 16, "Zone", text_color=color.black, text_size=size.tiny)
+        table.cell(infoTbl, 1, 16, smcZone, text_color=smcZoneColor, text_size=size.tiny)
+        table.cell(infoTbl, 2, 16, smcBullish ? "SMC+" : smcBearish ? "SMC-" : "", text_color=smcBullish ? color.lime : smcBearish ? color.red : color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 3, 16, "", text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 4, 16, "", text_color=color.gray, text_size=size.tiny)
+
+        // 시그널
+        string sigText = superLong ? "SUPER [" + finalGrade + "]" : strongLong ? "STRONG [" + currentGrade + "]" : normalLong ? "LONG [" + currentGrade + "]" : exitLongSignal ? "EXIT!" : "WAIT"
+        color sigColor = superLong ? color.aqua : strongLong ? color.yellow : normalLong ? color.green : exitLongSignal ? color.red : color.gray
+        color sigBg = superLong ? color.new(color.aqua, 70) : exitLongSignal ? color.new(color.red, 70) : color.new(color.gray, 50)
+        table.cell(infoTbl, 0, 17, "Signal", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+        table.cell(infoTbl, 1, 17, sigText, text_color=sigColor, bgcolor=sigBg, text_size=size.small)
+        table.cell(infoTbl, 2, 17, superLong ? "SMC+" : exitLongSignal ? "SELL" : "", text_color=superLong ? color.aqua : color.red, bgcolor=sigBg, text_size=size.tiny)
+        table.cell(infoTbl, 3, 17, superLong ? "ALL" : "", text_color=color.aqua, bgcolor=sigBg, text_size=size.tiny)
+        table.cell(infoTbl, 4, 17, superLong ? "GO!!" : strongLong ? "GO!" : exitLongSignal ? "OUT!" : "", text_color=superLong ? color.aqua : strongLong ? color.yellow : color.red, bgcolor=sigBg, text_size=size.small)
+
+        // 구분선
+        table.cell(infoTbl, 0, 18, "---", text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 1, 18, "---", text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 2, 18, "---", text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 3, 18, "---", text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 4, 18, "---", text_color=color.gray, text_size=size.tiny)
+
+        // 모드 설정 표시
+        string tradeModeShort = tradeMode == "선물" ? "선물" : tradeMode == "현물" ? "현물" : "주식"
+        color tradeModeColor = tradeMode == "선물" ? color.orange : tradeMode == "현물" ? color.teal : color.purple
+        string displayModeShort = displayMode == "전체" ? "전체" : displayMode == "최소화" ? "최소" : "테이블"
+        string signalModeShort = signalMode == "전체" ? "전체" : signalMode == "STRONG 이상" ? "STR+" : "SUPER"
+
+        table.cell(infoTbl, 0, 19, "MODE", text_color=color.white, bgcolor=color.navy, text_size=size.tiny)
+        table.cell(infoTbl, 1, 19, tradeModeShort, text_color=tradeModeColor, text_size=size.tiny)
+        table.cell(infoTbl, 2, 19, displayModeShort, text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 3, 19, signalModeShort, text_color=color.gray, text_size=size.tiny)
+        table.cell(infoTbl, 4, 19, smartTrailUp ? "LONG" : "SHORT", text_color=smartTrailUp ? color.lime : color.red, text_size=size.tiny)
+
+        // 현재 상태 요약
+        string statusText = exitLongSignal ? "EXIT NOW" : trailFlipToShort ? "WARNING" : smartTrailUp ? "HOLDING" : "WAIT"
+        color statusColor = exitLongSignal ? color.red : trailFlipToShort ? color.orange : smartTrailUp ? color.lime : color.gray
+        color statusBg = exitLongSignal ? color.new(color.red, 60) : trailFlipToShort ? color.new(color.orange, 70) : color.new(color.gray, 80)
+        table.cell(infoTbl, 0, 20, "STATUS", text_color=color.white, bgcolor=color.navy, text_size=size.tiny)
+        table.cell(infoTbl, 1, 20, statusText, text_color=statusColor, bgcolor=statusBg, text_size=size.small)
+        table.cell(infoTbl, 2, 20, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.green : color.gray, bgcolor=statusBg, text_size=size.tiny)
+        table.cell(infoTbl, 3, 20, currentGrade, text_color=longScore >= 19 ? color.lime : longScore >= 16 ? color.green : color.gray, bgcolor=statusBg, text_size=size.tiny)
+        table.cell(infoTbl, 4, 20, "", text_color=color.gray, bgcolor=statusBg, text_size=size.tiny)
+
+// ============================================
+// 미니 패널 (최소화 모드용)
+// ============================================
+
+if showMiniPanel and isMinimalMode and barstate.islast
+    var table miniTbl = table.new(position.top_right, 4, 12, bgcolor=color.new(color.black, 20), border_width=1)
+
+    // ========== 🟢 LONG 신호등 판단 로직 ==========
+    // 🟢 롱OK: 모든 핵심 조건 충족 + 구름 필터
+    // 🟡 대기: 일부 조건만 충족
+    // 🔴 위험: 역방향 또는 위험 구간
+
+    // 구름 필터: 활성화시 구름 아래면 롱 신호 차단
+    bool cloudLongOK = not ichimokuFilter or priceAboveCloud or priceInCloud
+    bool cloudShortOK = not ichimokuFilter or priceBelowCloud or priceInCloud
+
+    bool isLongGreen = smartTrailUp and tf1h_uptrend and longScore >= 16 and pricePosition < 30 and (deltaGrade == "STRONG BUY" or deltaGrade == "BUY" or deltaGrade == "NEUTRAL") and cloudLongOK
+    bool isLongRed = exitLongSignal or (pricePosition > 70 and (deltaGrade == "STRONG SELL" or deltaGrade == "SELL")) or (not smartTrailUp and not tf1h_uptrend) or (ichimokuFilter and priceBelowCloud)
+
+    string longLightEmoji = isLongGreen ? "🟢" : isLongRed ? "🔴" : "🟡"
+    string longLightText = isLongGreen ? "롱OK" : isLongRed ? "위험" : "대기"
+    string longLightReason = isLongGreen ? "조건충족!" : isLongRed ? (exitLongSignal ? "청산필요" : (ichimokuFilter and priceBelowCloud) ? "구름아래" : pricePosition > 70 ? "고점주의" : "하락추세") : (not smartTrailUp ? "추세↓" : not tf1h_uptrend ? "1H하락" : longScore < 16 ? "점수부족" : pricePosition >= 30 ? "위치높음" : not cloudLongOK ? "구름확인" : "조건확인")
+    color longLightBg = isLongGreen ? color.new(color.green, 20) : isLongRed ? color.new(color.red, 20) : color.new(color.yellow, 30)
+    color longLightColor = isLongGreen ? color.lime : isLongRed ? color.red : color.yellow
+
+    // ========== 🔴 SHORT 신호등 판단 로직 ==========
+    // 🟢 숏OK: 하락 조건 충족 (고점 + 하락추세 + 매도세) + 구름 필터
+    // 🟡 대기: 일부 조건만 충족
+    // 🔴 위험: 상승 추세 중
+
+    bool isShortGreen = not smartTrailUp and not tf1h_uptrend and not tf4h_uptrend and pricePosition > 70 and (deltaGrade == "STRONG SELL" or deltaGrade == "SELL") and cloudShortOK
+    bool isShortRed = (smartTrailUp and tf1h_uptrend and pricePosition < 50) or (ichimokuFilter and priceAboveCloud)
+
+    string shortLightEmoji = isShortGreen ? "🟢" : isShortRed ? "🔴" : "🟡"
+    string shortLightText = isShortGreen ? "숏OK" : isShortRed ? "위험" : "대기"
+    string shortLightReason = isShortGreen ? "하락조건!" : isShortRed ? ((ichimokuFilter and priceAboveCloud) ? "구름위" : smartTrailUp ? "상승추세" : "저점주의") : (smartTrailUp ? "추세↑" : tf1h_uptrend ? "1H상승" : pricePosition <= 70 ? "위치낮음" : not cloudShortOK ? "구름확인" : deltaGrade == "NEUTRAL" ? "수급중립" : "조건확인")
+    color shortLightBg = isShortGreen ? color.new(color.fuchsia, 20) : isShortRed ? color.new(color.red, 20) : color.new(color.yellow, 30)
+    color shortLightColor = isShortGreen ? color.fuchsia : isShortRed ? color.red : color.yellow
+
+    // Row 0: 🚦 LONG 신호등
+    table.cell(miniTbl, 0, 0, "📈LONG", text_color=color.white, bgcolor=color.new(color.teal, 30), text_size=size.normal)
+    table.cell(miniTbl, 1, 0, longLightEmoji + longLightText, text_color=longLightColor, bgcolor=longLightBg, text_size=size.large)
+    table.cell(miniTbl, 2, 0, longLightReason, text_color=longLightColor, bgcolor=longLightBg, text_size=size.small)
+    table.cell(miniTbl, 3, 0, str.tostring(longScore, "#") + "pt", text_color=longLightColor, bgcolor=longLightBg, text_size=size.normal)
+
+    // Row 1: 🚦 SHORT 신호등 (선물모드에서만 강조)
+    color shortRowBg = isFutures ? shortLightBg : color.new(color.gray, 60)
+    color shortRowColor = isFutures ? shortLightColor : color.gray
+    string shortDisplay = isFutures ? shortLightEmoji + shortLightText : "현물모드"
+    table.cell(miniTbl, 0, 1, "📉SHORT", text_color=color.white, bgcolor=color.new(color.purple, 30), text_size=size.normal)
+    table.cell(miniTbl, 1, 1, shortDisplay, text_color=shortRowColor, bgcolor=shortRowBg, text_size=size.large)
+    table.cell(miniTbl, 2, 1, isFutures ? shortLightReason : "숏불가", text_color=shortRowColor, bgcolor=shortRowBg, text_size=size.small)
+    table.cell(miniTbl, 3, 1, isFutures ? (isShortGreen ? "GO!" : "") : "", text_color=color.fuchsia, bgcolor=shortRowBg, text_size=size.normal)
+
+    // 시그널 상태
+    string sigText = superLong ? "SUPER" : strongLong ? "STRONG" : normalLong ? "LONG" : exitLongSignal ? "EXIT!" : "WAIT"
+    color sigColor = superLong ? color.aqua : strongLong ? color.yellow : normalLong ? color.green : exitLongSignal ? color.red : color.gray
+    color sigBg = superLong ? color.new(color.aqua, 50) : exitLongSignal ? color.new(color.red, 50) : color.new(color.gray, 70)
+
+    // 현재 상태
+    string statusText = exitLongSignal ? "청산!" : trailFlipToShort ? "주의" : smartTrailUp ? "보유" : "대기"
+    color statusColor = exitLongSignal ? color.red : trailFlipToShort ? color.orange : smartTrailUp ? color.lime : color.gray
+
+    // EMA 각도 상태 + 한글
+    string emaAngleStatus = emaStrongUp ? "▲▲강세" : emaWeakUp ? "▲상승" : emaSideways ? "-횡보" : "▼하락"
+    color emaAngleStatusColor = emaStrongUp ? color.lime : emaWeakUp ? color.yellow : emaSideways ? color.orange : color.red
+
+    // Row 2: 헤더
+    table.cell(miniTbl, 0, 2, "V39", text_color=color.white, bgcolor=color.blue, text_size=size.normal)
+    table.cell(miniTbl, 1, 2, emaAngleStatus, text_color=emaAngleStatusColor, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(miniTbl, 2, 2, timeframe.period, text_color=color.white, bgcolor=color.gray, text_size=size.normal)
+    table.cell(miniTbl, 3, 2, smartTrailUp ? "추세↑" : "추세↓", text_color=smartTrailUp ? color.lime : color.red, bgcolor=color.new(color.gray, 50), text_size=size.small)
+
+    // Row 3: 시그널
+    string sigKorean = superLong ? "최강매수" : strongLong ? "강력매수" : normalLong ? "매수" : exitLongSignal ? "청산!" : "대기"
+    table.cell(miniTbl, 0, 3, "시그널", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 1, 3, sigText, text_color=sigColor, bgcolor=sigBg, text_size=size.large)
+    table.cell(miniTbl, 2, 3, sigKorean, text_color=sigColor, bgcolor=sigBg, text_size=size.small)
+    table.cell(miniTbl, 3, 3, str.tostring(longScore, "#") + "pt", text_color=longScore >= 16 ? color.green : color.gray, bgcolor=sigBg, text_size=size.small)
+
+    // Row 4: 추세 + 한글 해석
+    string trendKorean = uptrendCount >= 3 ? "좋음" : uptrendCount >= 2 ? "보통" : "나쁨"
+    color trendKoreanColor = uptrendCount >= 3 ? color.lime : uptrendCount >= 2 ? color.yellow : color.red
+    table.cell(miniTbl, 0, 4, "추세", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 1, 4, str.tostring(uptrendCount) + "/4 " + trendKorean, text_color=trendKoreanColor, text_size=size.small)
+    table.cell(miniTbl, 2, 4, tf1h_uptrend ? "1H상승" : "1H하락", text_color=tf1h_uptrend ? color.green : color.red, text_size=size.small)
+    table.cell(miniTbl, 3, 4, tf4h_uptrend ? "4H상승" : "4H하락", text_color=tf4h_uptrend ? color.green : color.red, text_size=size.small)
+
+    // Row 5: 위치 + 한글 해석
+    string posKorean = pricePosition < 20 ? "저점OK" : pricePosition < 40 ? "양호" : pricePosition < 60 ? "중간" : pricePosition < 80 ? "높음" : "고점!"
+    color posKoreanColor = pricePosition < 20 ? color.lime : pricePosition < 40 ? color.green : pricePosition < 60 ? color.yellow : pricePosition < 80 ? color.orange : color.red
+    table.cell(miniTbl, 0, 5, "위치", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 1, 5, str.tostring(pricePosition, "#") + "% " + posKorean, text_color=posKoreanColor, text_size=size.small)
+    table.cell(miniTbl, 2, 5, "거래량", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(miniTbl, 3, 5, str.tostring(volRatio, "#.#") + "x", text_color=volSpike ? color.green : color.gray, text_size=size.small)
+
+    // Row 6: 상태 + 한글
+    color statusBg = exitLongSignal ? color.new(color.red, 50) : trailFlipToShort ? color.new(color.orange, 60) : color.new(color.gray, 70)
+    string zoneKorean = inDiscount ? "저점구간" : inPremium ? "고점구간" : "중간"
+    table.cell(miniTbl, 0, 6, "상태", text_color=color.white, bgcolor=color.navy, text_size=size.small)
+    table.cell(miniTbl, 1, 6, statusText, text_color=statusColor, bgcolor=statusBg, text_size=size.large)
+    table.cell(miniTbl, 2, 6, zoneKorean, text_color=inDiscount ? color.green : inPremium ? color.red : color.gray, bgcolor=statusBg, text_size=size.small)
+    table.cell(miniTbl, 3, 6, superLong ? "GO!!" : strongLong ? "GO!" : exitLongSignal ? "OUT!" : "", text_color=superLong ? color.aqua : strongLong ? color.yellow : color.red, bgcolor=statusBg, text_size=size.normal)
+
+    // Row 7: 고래 + 한글
+    string whaleKoreanText = whaleBuy ? "대량매수" : whaleSell ? "대량매도" : "없음"
+    color whaleBg = whaleBuy ? color.new(color.blue, 50) : whaleSell ? color.new(color.purple, 50) : color.new(color.gray, 70)
+    color whaleColor = whaleBuy ? color.aqua : whaleSell ? color.fuchsia : color.gray
+    table.cell(miniTbl, 0, 7, "고래", text_color=color.white, bgcolor=color.new(color.purple, 30), text_size=size.small)
+    table.cell(miniTbl, 1, 7, whaleKoreanText, text_color=whaleColor, bgcolor=whaleBg, text_size=size.small)
+    table.cell(miniTbl, 2, 7, isWhaleVolume ? str.tostring(volRatio, "#.#") + "x" : "-", text_color=isWhaleVolume ? color.yellow : color.gray, bgcolor=whaleBg, text_size=size.small)
+    table.cell(miniTbl, 3, 7, whaleBuy or whaleSell ? whaleStrength : "", text_color=color.yellow, bgcolor=whaleBg, text_size=size.small)
+
+    // Row 8: 심리 + 더 명확한 한글
+    color psychBg = extremeFear ? color.new(color.green, 40) : extremeGreed ? color.new(color.red, 40) : psychBuyZone ? color.new(color.teal, 50) : psychSellZone ? color.new(color.maroon, 50) : color.new(color.gray, 70)
+    color psychColor = extremeFear or psychBuyZone ? color.lime : extremeGreed or psychSellZone ? color.red : color.gray
+    string psychAction = extremeFear ? "매수기회" : extremeGreed ? "매도주의" : psychBuyZone ? "매수구간" : psychSellZone ? "매도구간" : "중립"
+    table.cell(miniTbl, 0, 8, "심리", text_color=color.white, bgcolor=color.new(color.navy, 30), text_size=size.small)
+    table.cell(miniTbl, 1, 8, fearGreedEmoji + fearGreedGrade, text_color=psychColor, bgcolor=psychBg, text_size=size.small)
+    table.cell(miniTbl, 2, 8, psychAction, text_color=psychColor, bgcolor=psychBg, text_size=size.small)
+    table.cell(miniTbl, 3, 8, nearRoundBelow ? "지지선" : nearRoundAbove ? "저항선" : "", text_color=color.aqua, bgcolor=psychBg, text_size=size.small)
+
+    // Row 9: Delta + 스마트 OBV
+    string deltaKorean = deltaGrade == "STRONG BUY" ? "강매수세" : deltaGrade == "BUY" ? "매수세" : deltaGrade == "STRONG SELL" ? "강매도세" : deltaGrade == "SELL" ? "매도세" : "중립"
+    string smartOBVKorean = smartOBVGrade == "STRONG BUY" ? "강매수" : smartOBVGrade == "BUY" ? "매수" : smartOBVGrade == "STRONG SELL" ? "강매도" : smartOBVGrade == "SELL" ? "매도" : smartOBVGrade == "SQUEEZE" ? "응축" : "중립"
+    color deltaBg = deltaGrade == "STRONG BUY" ? color.new(color.lime, 40) : deltaGrade == "BUY" ? color.new(color.green, 50) : deltaGrade == "STRONG SELL" ? color.new(color.fuchsia, 40) : deltaGrade == "SELL" ? color.new(color.red, 50) : color.new(color.gray, 70)
+    color smartOBVColor = smartOBVGrade == "STRONG BUY" ? color.lime : smartOBVGrade == "BUY" ? color.green : smartOBVGrade == "STRONG SELL" ? color.fuchsia : smartOBVGrade == "SELL" ? color.red : smartOBVGrade == "SQUEEZE" ? color.yellow : color.gray
+    table.cell(miniTbl, 0, 9, "수급", text_color=color.white, bgcolor=color.new(color.teal, 30), text_size=size.small)
+    table.cell(miniTbl, 1, 9, deltaKorean, text_color=deltaColor, bgcolor=deltaBg, text_size=size.small)
+    table.cell(miniTbl, 2, 9, str.tostring(deltaRatio, "#") + "%", text_color=deltaColor, bgcolor=deltaBg, text_size=size.small)
+    table.cell(miniTbl, 3, 9, "OBV:" + smartOBVKorean, text_color=smartOBVColor, bgcolor=deltaBg, text_size=size.small)
+
+    // Row 10: 일목 구름 상태
+    string cloudKorean = priceAboveCloud ? "구름위" : priceBelowCloud ? "구름아래" : "구름내"
+    string cloudType = bullishCloud ? "양운" : "음운"
+    string cloudAction = priceAboveCloud ? "롱유리" : priceBelowCloud ? "숏유리" : "관망"
+    color cloudBg = priceAboveCloud ? color.new(color.lime, 40) : priceBelowCloud ? color.new(color.red, 40) : color.new(color.yellow, 50)
+    color cloudTextColor = priceAboveCloud ? color.lime : priceBelowCloud ? color.red : color.yellow
+    table.cell(miniTbl, 0, 10, "구름", text_color=color.white, bgcolor=color.new(color.purple, 30), text_size=size.small)
+    table.cell(miniTbl, 1, 10, cloudKorean, text_color=cloudTextColor, bgcolor=cloudBg, text_size=size.small)
+    table.cell(miniTbl, 2, 10, cloudType, text_color=bullishCloud ? color.lime : color.red, bgcolor=cloudBg, text_size=size.small)
+    table.cell(miniTbl, 3, 10, cloudAction, text_color=cloudTextColor, bgcolor=cloudBg, text_size=size.small)
+
+    // Row 11: 요약 조언
+    string longAdvice = isLongGreen ? "롱 진입 고려" : isLongRed ? "롱 위험!" : "롱 대기"
+    string shortAdvice = isShortGreen ? "숏 진입 고려" : isShortRed ? "숏 위험!" : "숏 대기"
+    string finalAdvice = isLongGreen ? longAdvice : (isFutures and isShortGreen) ? shortAdvice : (isLongRed and isFutures and not isShortRed) ? "숏 검토?" : "관망 추천"
+    color adviceBg = isLongGreen ? color.new(color.green, 30) : (isFutures and isShortGreen) ? color.new(color.fuchsia, 30) : color.new(color.gray, 50)
+    color adviceColor = isLongGreen ? color.lime : (isFutures and isShortGreen) ? color.fuchsia : color.gray
+    table.cell(miniTbl, 0, 11, "조언", text_color=color.white, bgcolor=color.navy, text_size=size.small)
+    table.cell(miniTbl, 1, 11, finalAdvice, text_color=adviceColor, bgcolor=adviceBg, text_size=size.small)
+    table.cell(miniTbl, 2, 11, "", text_color=color.gray, bgcolor=adviceBg, text_size=size.small)
+    table.cell(miniTbl, 3, 11, "", text_color=color.gray, bgcolor=adviceBg, text_size=size.small)
+
+// ============================================
+// 알림 (참고용 - 투자권유 아님)
+// ============================================
+
+// 거래량 배수 텍스트 (5분봉 제거)
+string volDetail15m = "15m:" + str.tostring(tf15m_volRatio, "#.#") + "x"
+string volDetail1h = "1H:" + str.tostring(tf1h_volRatio, "#.#") + "x"
+string volDetail4h = "4H:" + str.tostring(tf4h_volRatio, "#.#") + "x"
+string volDetails = volDetail15m + " " + volDetail1h + " " + volDetail4h
+
+// 면책 문구
+string disclaimer = "[참고용-투자권유아님]"
+
+if superLong
+    string m1 = "🚀🚀🚀 SUPER LONG 🚀🚀🚀"
+    string m2 = "[" + finalGrade + "] " + str.tostring(longScore, "#") + "pt"
+    string m3 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string m4 = "━━━━━━━━━━━━━━"
+    string m5 = "📈 추세: " + trendStrength + " | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string m6 = "📊 TF:" + str.tostring(uptrendCount) + "/4 | Vol:" + str.tostring(volSpikeCount) + "/4"
+    string m7 = "📉 거래량: " + str.tostring(volRatio, "#.#") + "x | 매수압력: " + str.tostring(buyPressure, "#") + "%"
+    string m7b = "📊 Delta: " + deltaGrade + " | CVD: " + (cvdUptrend ? "상승↑" : cvdDowntrend ? "하락↓" : "중립")
+    string m8 = disclaimer
+    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7 + "\n" + m7b + "\n" + m8
+    alert(msg, freq=alert.freq_once_per_bar_close)
+
+if strongLong and not superLong
+    string m1 = "⭐⭐ STRONG LONG ⭐⭐"
+    string m2 = "[" + currentGrade + "] " + str.tostring(longScore, "#") + "pt"
+    string m3 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string m4 = "━━━━━━━━━━━━━━"
+    string m5 = "📈 추세: " + trendStrength + " | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string m6 = "📊 TF:" + str.tostring(uptrendCount) + "/4 | EMA:" + str.tostring(emaAlignedUpCount) + "/5"
+    string m7 = "📉 거래량: " + str.tostring(volRatio, "#.#") + "x | 매수압력: " + str.tostring(buyPressure, "#") + "%"
+    string m7b = "📊 Delta: " + deltaGrade + " | CVD: " + (cvdUptrend ? "상승↑" : cvdDowntrend ? "하락↓" : "중립")
+    string m8 = disclaimer
+    string msg = m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5 + "\n" + m6 + "\n" + m7 + "\n" + m7b + "\n" + m8
+    alert(msg, freq=alert.freq_once_per_bar_close)
+
+if normalLong and signalMode == "전체"
+    string m1 = "📗 LONG [" + currentGrade + "] " + str.tostring(longScore, "#") + "pt"
+    string m2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string m3 = "📈 추세:" + trendStrength + " | TF:" + str.tostring(uptrendCount) + "/4"
+    string m4 = "📉 거래량: " + str.tostring(volRatio, "#.#") + "x | 매수압력: " + str.tostring(buyPressure, "#") + "%"
+    string m5 = disclaimer
+    alert(m1 + "\n" + m2 + "\n" + m3 + "\n" + m4 + "\n" + m5, freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// 청산 알림
+// ============================================
+
+if exitLongSignal
+    string e1 = "❌❌ EXIT LONG ❌❌"
+    string e2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string e3 = "━━━━━━━━━━━━━━"
+    string e4 = "⚠️ Smart Trail이 SHORT로 전환됨"
+    string e5 = "📊 점수: " + str.tostring(longScore, "#") + "pt | 1H추세: " + (tf1h_uptrend ? "UP" : "DOWN")
+    string e6 = disclaimer
+    alert(e1 + "\n" + e2 + "\n" + e3 + "\n" + e4 + "\n" + e5 + "\n" + e6, freq=alert.freq_once_per_bar_close)
+
+if trailFlipToShort and not exitLongSignal
+    string w1 = "⚠️ Trail Warning ⚠️"
+    string w2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string w3 = "━━━━━━━━━━━━━━"
+    string w4 = "📉 Smart Trail SHORT 전환 - 모니터링 필요"
+    string w5 = "📊 점수: " + str.tostring(longScore, "#") + "pt | " + disclaimer
+    alert(w1 + "\n" + w2 + "\n" + w3 + "\n" + w4 + "\n" + w5, freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// SHORT 알림 (선물 모드에서만)
+// ============================================
+
+if superShort
+    string s1 = "💀💀💀 SUPER SHORT 💀💀💀"
+    string s2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string s3 = "━━━━━━━━━━━━━━"
+    string s4 = "📉 하락TF:" + str.tostring(downtrendCount) + "/4 | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string s5 = "📊 거래량: " + str.tostring(volRatio, "#.#") + "x | 매도압력: " + str.tostring(100 - buyPressure, "#") + "%"
+    string s6 = disclaimer
+    alert(s1 + "\n" + s2 + "\n" + s3 + "\n" + s4 + "\n" + s5 + "\n" + s6, freq=alert.freq_once_per_bar_close)
+
+if strongShort and not superShort
+    string s1 = "⚠️⚠️ STRONG SHORT ⚠️⚠️"
+    string s2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string s3 = "━━━━━━━━━━━━━━"
+    string s4 = "📉 하락TF:" + str.tostring(downtrendCount) + "/4 | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string s5 = "📊 거래량: " + str.tostring(volRatio, "#.#") + "x | 매도압력: " + str.tostring(100 - buyPressure, "#") + "%"
+    string s6 = disclaimer
+    alert(s1 + "\n" + s2 + "\n" + s3 + "\n" + s4 + "\n" + s5 + "\n" + s6, freq=alert.freq_once_per_bar_close)
+
+if normalShort and signalMode == "전체"
+    string s1 = "📕 SHORT"
+    string s2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string s3 = "📉 하락TF:" + str.tostring(downtrendCount) + "/4 | 위치: " + str.tostring(pricePosition, "#") + "%"
+    string s4 = "📊 거래량: " + str.tostring(volRatio, "#.#") + "x | " + disclaimer
+    alert(s1 + "\n" + s2 + "\n" + s3 + "\n" + s4, freq=alert.freq_once_per_bar_close)
+
+if exitShortSignal
+    string e1 = "❌❌ EXIT SHORT ❌❌"
+    string e2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string e3 = "━━━━━━━━━━━━━━"
+    string e4 = "✅ Smart Trail이 LONG으로 전환됨"
+    string e5 = disclaimer
+    alert(e1 + "\n" + e2 + "\n" + e3 + "\n" + e4 + "\n" + e5, freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// 고래 알림
+// ============================================
+
+if showWhale and whaleBuy
+    string w1 = whaleStrength + " 매수 감지!"
+    string w2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string w3 = "━━━━━━━━━━━━━━"
+    string w4 = "📊 거래량: " + str.tostring(volRatio, "#.#") + "x (" + whaleKorean + " 등급)"
+    string w5 = "📈 가격변동: +" + str.tostring(priceChangePercent, "#.##") + "%"
+    string w6 = "💪 매수압력: " + str.tostring(buyPressure, "#") + "% | " + disclaimer
+    alert(w1 + "\n" + w2 + "\n" + w3 + "\n" + w4 + "\n" + w5 + "\n" + w6, freq=alert.freq_once_per_bar_close)
+
+if showWhale and whaleSell
+    string w1 = whaleStrength + " 매도 감지!"
+    string w2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string w3 = "━━━━━━━━━━━━━━"
+    string w4 = "📊 거래량: " + str.tostring(volRatio, "#.#") + "x (" + whaleKorean + " 등급)"
+    string w5 = "📉 가격변동: -" + str.tostring(priceChangePercent, "#.##") + "%"
+    string w6 = "📉 매도압력: " + str.tostring(100 - buyPressure, "#") + "% | " + disclaimer
+    alert(w1 + "\n" + w2 + "\n" + w3 + "\n" + w4 + "\n" + w5 + "\n" + w6, freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// Delta 급증 알림 (수급 급변)
+// ============================================
+
+if showVolumeDelta and isDeltaSpike and strongPositiveDelta
+    string d1 = "📈📈 DELTA 급증 (매수) 📈📈"
+    string d2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string d3 = "━━━━━━━━━━━━━━"
+    string d4 = "📊 Delta: " + str.tostring(deltaRatio, "#") + "% (평균 " + str.tostring(deltaSpike, "#.#") + "배)"
+    string d5 = "📈 CVD: " + (cvdUptrend ? "상승 추세" : "하락 추세")
+    string d6 = delta3ConsecutiveBuy ? "✅ 3봉 연속 매수 우세\n" : ""
+    string d7 = disclaimer
+    string deltaMsg1 = d1 + "\n" + d2 + "\n" + d3 + "\n" + d4 + "\n" + d5 + "\n" + d6 + d7
+    alert(deltaMsg1, freq=alert.freq_once_per_bar_close)
+
+if showVolumeDelta and isDeltaSpike and strongNegativeDelta
+    string d1 = "📉📉 DELTA 급증 (매도) 📉📉"
+    string d2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string d3 = "━━━━━━━━━━━━━━"
+    string d4 = "📊 Delta: " + str.tostring(deltaRatio, "#") + "% (평균 " + str.tostring(deltaSpike, "#.#") + "배)"
+    string d5 = "📉 CVD: " + (cvdUptrend ? "상승 추세" : "하락 추세")
+    string d6 = delta3ConsecutiveSell ? "⚠️ 3봉 연속 매도 우세\n" : ""
+    string d7 = disclaimer
+    string deltaMsg2 = d1 + "\n" + d2 + "\n" + d3 + "\n" + d4 + "\n" + d5 + "\n" + d6 + d7
+    alert(deltaMsg2, freq=alert.freq_once_per_bar_close)
+
+// Delta 다이버전스 알림
+if showVolumeDelta and deltaBullDiv and nearSupport3d
+    string d1 = "🔄 Delta 강세 다이버전스!"
+    string d2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string d3 = "━━━━━━━━━━━━━━"
+    string d4 = "가격↓ + CVD↑ = 반전 신호"
+    string d5 = "📍 지지선 근처 - 매수 고려"
+    string d6 = disclaimer
+    alert(d1 + "\n" + d2 + "\n" + d3 + "\n" + d4 + "\n" + d5 + "\n" + d6, freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// 엘리엇 파동 분석 (Elliott Wave Analysis)
+// ============================================
+
+// 스윙 고점/저점 감지
+ewSwingHigh = ta.pivothigh(high, ewSwingLength, ewSwingLength)
+ewSwingLow = ta.pivotlow(low, ewSwingLength, ewSwingLength)
+
+// 스윙 포인트 저장 배열
+var float[] ewHighs = array.new_float(10, na)
+var float[] ewLows = array.new_float(10, na)
+var int[] ewHighBars = array.new_int(10, na)
+var int[] ewLowBars = array.new_int(10, na)
+
+// 스윙 포인트 업데이트
+if showElliottWave and not na(ewSwingHigh)
+    array.unshift(ewHighs, ewSwingHigh)
+    array.unshift(ewHighBars, bar_index - ewSwingLength)
+    if array.size(ewHighs) > 10
+        array.pop(ewHighs)
+        array.pop(ewHighBars)
+
+if showElliottWave and not na(ewSwingLow)
+    array.unshift(ewLows, ewSwingLow)
+    array.unshift(ewLowBars, bar_index - ewSwingLength)
+    if array.size(ewLows) > 10
+        array.pop(ewLows)
+        array.pop(ewLowBars)
+
+// 피보나치 되돌림 비율 계산 함수 (Wave1에서 얼마나 되돌림했는지)
+ewFibRetracement(float waveStart, float waveEnd, float retracePoint) =>
+    math.abs((waveEnd - retracePoint) / (waveEnd - waveStart) * 100)
+
+// 피보나치 레벨 체크 (허용 오차 포함)
+ewCheckFib(float ratio, float target) =>
+    math.abs(ratio - target) <= ewFibTolerance
+
+// 파동 구조 분석
+var string ewCurrentPattern = "분석중"
+var string ewCurrentWave = "-"
+var float ewWave0 = na  // 시작점
+var float ewWave1 = na
+var float ewWave2 = na
+var float ewWave3 = na
+var float ewWave4 = na
+var float ewWave5 = na
+var int ewWave0Bar = na
+var int ewWave1Bar = na
+var int ewWave2Bar = na
+var int ewWave3Bar = na
+var int ewWave4Bar = na
+var int ewWave5Bar = na
+var bool ewIsUptrend = true
+
+// 최근 스윙 포인트로 파동 분석
+if showElliottWave and array.size(ewHighs) >= 3 and array.size(ewLows) >= 3
+    // 최근 고점/저점 가져오기
+    float h1 = array.get(ewHighs, 0)
+    float h2 = array.get(ewHighs, 1)
+    float h3 = array.get(ewHighs, 2)
+    float l1 = array.get(ewLows, 0)
+    float l2 = array.get(ewLows, 1)
+    float l3 = array.get(ewLows, 2)
+
+    int hb1 = array.get(ewHighBars, 0)
+    int hb2 = array.get(ewHighBars, 1)
+    int lb1 = array.get(ewLowBars, 0)
+    int lb2 = array.get(ewLowBars, 1)
+
+    // 상승 Impulse 패턴 감지 (HH + HL 구조)
+    bool isHigherHigh = not na(h1) and not na(h2) and h1 > h2
+    bool isHigherLow = not na(l1) and not na(l2) and l1 > l2
+
+    // 하락 Impulse 패턴 감지 (LH + LL 구조)
+    bool isLowerHigh = not na(h1) and not na(h2) and h1 < h2
+    bool isLowerLow = not na(l1) and not na(l2) and l1 < l2
+
+    // 시간 순서 검증: Wave0(저점) → Wave1(고점) → Wave2(저점) → Wave3(고점)
+    bool validUptrendSequence = lb2 < hb2 and hb2 < lb1 and lb1 < hb1
+    bool validDowntrendSequence = hb2 < lb2 and lb2 < hb1 and hb1 < lb1
+
+    // 상승 추세 Impulse
+    if isHigherHigh and isHigherLow and validUptrendSequence
+        ewIsUptrend := true
+        ewWave0 := l2
+        ewWave1 := h2
+        ewWave2 := l1
+        ewWave3 := h1
+        ewWave0Bar := lb2
+        ewWave1Bar := hb2
+        ewWave2Bar := lb1
+        ewWave3Bar := hb1
+
+        // 피보나치 비율 검증
+        float wave1Size = ewWave1 - ewWave0
+        float wave2Retrace = ewFibRetracement(ewWave0, ewWave1, ewWave2)
+        float wave3Extend = (ewWave3 - ewWave2) / wave1Size * 100
+
+        // Wave 2: 38.2~78.6% 되돌림 (가장 일반적: 50~61.8%)
+        bool validWave2 = wave2Retrace >= 38.2 and wave2Retrace <= 78.6
+
+        // Wave 3: 161.8% 이상 확장 (가장 강한 파동, 절대 가장 짧지 않음)
+        bool validWave3 = wave3Extend >= 161.8
+
+        if validWave2 and validWave3
+            ewCurrentPattern := "IMPULSE ↑"
+            if close > ewWave3
+                ewCurrentWave := "Wave 5 진행중"
+            else if close > ewWave2
+                ewCurrentWave := "Wave 3 진행중"
+            else
+                ewCurrentWave := "Wave 2 (매수 구간)"
+        else if validWave2 and wave3Extend >= 100
+            ewCurrentPattern := "IMPULSE ↑ (약)"
+            ewCurrentWave := "Wave 3 진행중"
+        else if validWave2
+            ewCurrentPattern := "ABC 조정 가능"
+            ewCurrentWave := "Wave C 진행중"
+
+    // 하락 추세 Impulse
+    else if isLowerHigh and isLowerLow and validDowntrendSequence
+        ewIsUptrend := false
+        ewWave0 := h2
+        ewWave1 := l2
+        ewWave2 := h1
+        ewWave3 := l1
+        ewWave0Bar := hb2
+        ewWave1Bar := lb2
+        ewWave2Bar := hb1
+        ewWave3Bar := lb1
+
+        float wave1Size = ewWave0 - ewWave1
+        float wave2Retrace = ewFibRetracement(ewWave0, ewWave1, ewWave2)
+        float wave3Extend = (ewWave2 - ewWave3) / wave1Size * 100
+
+        // Wave 2: 38.2~78.6% 되돌림
+        bool validWave2 = wave2Retrace >= 38.2 and wave2Retrace <= 78.6
+        // Wave 3: 161.8% 이상 확장
+        bool validWave3 = wave3Extend >= 161.8
+
+        if validWave2 and validWave3
+            ewCurrentPattern := "IMPULSE ↓"
+            if close < ewWave3
+                ewCurrentWave := "Wave 5 진행중"
+            else if close < ewWave2
+                ewCurrentWave := "Wave 3 진행중"
+            else
+                ewCurrentWave := "Wave 2 (매도 구간)"
+        else if validWave2 and wave3Extend >= 100
+            ewCurrentPattern := "IMPULSE ↓ (약)"
+            ewCurrentWave := "Wave 3 진행중"
+        else if validWave2
+            ewCurrentPattern := "ABC 조정 가능"
+            ewCurrentWave := "Wave C 진행중"
+
+    // 횡보/삼각형 패턴 감지
+    else if not isHigherHigh and not isLowerLow
+        float range1 = math.abs(h1 - l1)
+        float range2 = math.abs(h2 - l2)
+
+        // 수렴 삼각형: 범위가 줄어듦
+        if range1 < range2
+            ewCurrentPattern := "TRIANGLE"
+            ewCurrentWave := "수렴 중 (브레이크아웃 대기)"
+        else
+            ewCurrentPattern := "FLAT/ZIGZAG"
+            ewCurrentWave := "조정파 진행중"
+
+// Wave 3 매매 신호 (골든존)
+var bool ewWave3BuyZone = false
+var bool ewWave3SellZone = false
+var float ewGoldenTop = na
+var float ewGoldenBottom = na
+
+if showElliottWave and not na(ewWave0) and not na(ewWave1)
+    float wave1Range = math.abs(ewWave1 - ewWave0)
+
+    if ewIsUptrend
+        // 상승 추세: Wave 2 골든존 (61.8~78.6%)
+        ewGoldenTop := ewWave1 - wave1Range * 0.618
+        ewGoldenBottom := ewWave1 - wave1Range * 0.786
+        ewWave3BuyZone := close >= ewGoldenBottom and close <= ewGoldenTop and close < ewWave1
+        ewWave3SellZone := false
+    else
+        // 하락 추세: Wave 2 골든존 (61.8~78.6%)
+        ewGoldenBottom := ewWave1 + wave1Range * 0.618
+        ewGoldenTop := ewWave1 + wave1Range * 0.786
+        ewWave3SellZone := close >= ewGoldenBottom and close <= ewGoldenTop and close > ewWave1
+        ewWave3BuyZone := false
+
+// 엘리엇 파동 시각화
+var label ewLabel1 = na
+var label ewLabel2 = na
+var label ewLabel3 = na
+var line ewFibLine1 = na
+var line ewFibLine2 = na
+var line ewFibLine3 = na
+var box ewGoldenBox = na
+
+// 이전 객체 삭제
+if showElliottWave and showEWLabels
+    label.delete(ewLabel1[1])
+    label.delete(ewLabel2[1])
+    label.delete(ewLabel3[1])
+
+if showElliottWave and showEWFib
+    line.delete(ewFibLine1[1])
+    line.delete(ewFibLine2[1])
+    line.delete(ewFibLine3[1])
+
+if showElliottWave and showEWZones
+    box.delete(ewGoldenBox[1])
+
+// 파동 레이블 그리기
+if showElliottWave and showEWLabels and not na(ewWave1Bar) and not na(ewWave2Bar)
+    labelColor = ewIsUptrend ? ewImpulseColor : ewCorrectiveColor
+
+    if not na(ewWave0) and not na(ewWave0Bar)
+        ewLabel1 := label.new(ewWave0Bar, ewIsUptrend ? ewWave0 : ewWave0,
+             ewIsUptrend ? "0" : "0",
+             style=ewIsUptrend ? label.style_label_up : label.style_label_down,
+             color=labelColor, textcolor=color.white, size=size.small)
+
+    if not na(ewWave1) and not na(ewWave1Bar)
+        ewLabel2 := label.new(ewWave1Bar, ewIsUptrend ? ewWave1 : ewWave1,
+             "1",
+             style=ewIsUptrend ? label.style_label_down : label.style_label_up,
+             color=labelColor, textcolor=color.white, size=size.small)
+
+    if not na(ewWave2) and not na(ewWave2Bar)
+        ewLabel3 := label.new(ewWave2Bar, ewIsUptrend ? ewWave2 : ewWave2,
+             "2",
+             style=ewIsUptrend ? label.style_label_up : label.style_label_down,
+             color=labelColor, textcolor=color.white, size=size.small)
+
+// 피보나치 레벨 그리기
+if showElliottWave and showEWFib and not na(ewWave0) and not na(ewWave1)
+    float wave1Range = math.abs(ewWave1 - ewWave0)
+    float fib382 = ewIsUptrend ? ewWave1 - wave1Range * 0.382 : ewWave1 + wave1Range * 0.382
+    float fib50 = ewIsUptrend ? ewWave1 - wave1Range * 0.5 : ewWave1 + wave1Range * 0.5
+    float fib618 = ewIsUptrend ? ewWave1 - wave1Range * 0.618 : ewWave1 + wave1Range * 0.618
+
+    ewFibLine1 := line.new(ewWave1Bar, fib382, bar_index, fib382, color=color.gray, style=line.style_dotted, width=1)
+    ewFibLine2 := line.new(ewWave1Bar, fib50, bar_index, fib50, color=color.yellow, style=line.style_dotted, width=1)
+    ewFibLine3 := line.new(ewWave1Bar, fib618, bar_index, fib618, color=color.green, style=line.style_dotted, width=2)
+
+// 골든존 박스 그리기
+if showElliottWave and showEWZones and not na(ewGoldenTop) and not na(ewGoldenBottom)
+    ewGoldenBox := box.new(bar_index - 50, ewGoldenTop, bar_index + 10, ewGoldenBottom,
+         bgcolor=ewGoldenZoneColor, border_color=color.green, border_width=1)
+
+// 엘리엇 파동 테이블 (미니 패널에 통합)
+var table ewTable = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 85), border_width=1)
+
+if showElliottWave and barstate.islast
+    table.cell(ewTable, 0, 0, "📊 Elliott Wave", text_color=color.white, text_size=size.small)
+    table.cell(ewTable, 1, 0, "", text_color=color.white, text_size=size.small)
+    table.cell(ewTable, 0, 1, "패턴", text_color=color.gray, text_size=size.tiny)
+    table.cell(ewTable, 1, 1, ewCurrentPattern, text_color=ewIsUptrend ? color.lime : color.red, text_size=size.tiny)
+    table.cell(ewTable, 0, 2, "현재", text_color=color.gray, text_size=size.tiny)
+    table.cell(ewTable, 1, 2, ewCurrentWave, text_color=color.yellow, text_size=size.tiny)
+    table.cell(ewTable, 0, 3, "신호", text_color=color.gray, text_size=size.tiny)
+    string ewSignal = ewWave3BuyZone ? "🟢 매수 골든존" : ewWave3SellZone ? "🔴 매도 골든존" : "⚪ 대기"
+    table.cell(ewTable, 1, 3, ewSignal, text_color=ewWave3BuyZone ? color.lime : ewWave3SellZone ? color.red : color.gray, text_size=size.tiny)
+
+// ============================================
+// 엘리엇 파동 알림
+// ============================================
+
+// Wave 3 매수 기회 알림
+if showElliottWave and ewWave3BuyZone and ewCurrentPattern == "IMPULSE ↑"
+    string ew1 = "🌊 ELLIOTT WAVE 매수 신호! 🌊"
+    string ew2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string ew3 = "━━━━━━━━━━━━━━"
+    string ew4 = "📈 패턴: " + ewCurrentPattern
+    string ew5 = "🎯 Wave 2 골든존 (61.8~78.6%)"
+    string ew6 = "💰 Wave 3 진입 기회!"
+    string ew7 = "🛡️ 손절: Wave 1 시작점 ($" + str.tostring(ewWave0, "#.##") + ")"
+    string ew8 = "🎯 목표: 161.8~261.8% 확장"
+    string ew9 = disclaimer
+    alert(ew1 + "\n" + ew2 + "\n" + ew3 + "\n" + ew4 + "\n" + ew5 + "\n" + ew6 + "\n" + ew7 + "\n" + ew8 + "\n" + ew9, freq=alert.freq_once_per_bar_close)
+
+// Wave 3 매도 기회 알림 (선물)
+if showElliottWave and ewWave3SellZone and ewCurrentPattern == "IMPULSE ↓" and isFutures
+    string ew1 = "🌊 ELLIOTT WAVE 매도 신호! 🌊"
+    string ew2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string ew3 = "━━━━━━━━━━━━━━"
+    string ew4 = "📉 패턴: " + ewCurrentPattern
+    string ew5 = "🎯 Wave 2 골든존 (61.8~78.6%)"
+    string ew6 = "💰 Wave 3 숏 진입 기회!"
+    string ew7 = "🛡️ 손절: Wave 1 시작점 ($" + str.tostring(ewWave0, "#.##") + ")"
+    string ew8 = "🎯 목표: 161.8~261.8% 확장"
+    string ew9 = disclaimer
+    alert(ew1 + "\n" + ew2 + "\n" + ew3 + "\n" + ew4 + "\n" + ew5 + "\n" + ew6 + "\n" + ew7 + "\n" + ew8 + "\n" + ew9, freq=alert.freq_once_per_bar_close)
+
+// 삼각형 브레이크아웃 대기 알림
+if showElliottWave and ewCurrentPattern == "TRIANGLE"
+    string ew1 = "🔺 TRIANGLE 패턴 감지!"
+    string ew2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string ew3 = "━━━━━━━━━━━━━━"
+    string ew4 = "📊 수렴 삼각형 - 브레이크아웃 대기"
+    string ew5 = "⚡ 변동성 확대 예상"
+    string ew6 = disclaimer
+    alert(ew1 + "\n" + ew2 + "\n" + ew3 + "\n" + ew4 + "\n" + ew5 + "\n" + ew6, freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// 청산 스윕 알림 (대량 청산 후 반전 = 진입 기회)
+// ============================================
+
+// 롱 청산 스윕 알림 (하락 후 반등 = 매수 기회)
+if enableLiqLevels and longLiq100xSweep
+    string liq1 = "🔥 100x 롱 청산 스윕! 🔥"
+    string liq2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string liq3 = "━━━━━━━━━━━━━━"
+    string liq4 = "💀 100x 롱 청산 레벨 돌파 후 반등"
+    string liq5 = "📈 대량 청산 발생 → 매수 반등 기회?"
+    string liq6 = "🎯 청산 레벨: $" + str.tostring(liqLong100x, "#.##")
+    string liq7 = disclaimer
+    alert(liq1 + "\n" + liq2 + "\n" + liq3 + "\n" + liq4 + "\n" + liq5 + "\n" + liq6 + "\n" + liq7, freq=alert.freq_once_per_bar_close)
+
+if enableLiqLevels and longLiq50xSweep and not longLiq100xSweep
+    string liq1 = "⚠️ 50x 롱 청산 스윕!"
+    string liq2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string liq3 = "━━━━━━━━━━━━━━"
+    string liq4 = "📉 50x 롱 청산 레벨 돌파 후 반등"
+    string liq5 = "🎯 청산 레벨: $" + str.tostring(liqLong50x, "#.##")
+    string liq6 = disclaimer
+    alert(liq1 + "\n" + liq2 + "\n" + liq3 + "\n" + liq4 + "\n" + liq5 + "\n" + liq6, freq=alert.freq_once_per_bar_close)
+
+// 숏 청산 스윕 알림 (상승 후 하락 = 매도 기회)
+if enableLiqLevels and shortLiq100xSweep and isFutures
+    string liq1 = "🔥 100x 숏 청산 스윕! 🔥"
+    string liq2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string liq3 = "━━━━━━━━━━━━━━"
+    string liq4 = "💀 100x 숏 청산 레벨 돌파 후 하락"
+    string liq5 = "📉 대량 청산 발생 → 매도 하락 기회?"
+    string liq6 = "🎯 청산 레벨: $" + str.tostring(liqShort100x, "#.##")
+    string liq7 = disclaimer
+    alert(liq1 + "\n" + liq2 + "\n" + liq3 + "\n" + liq4 + "\n" + liq5 + "\n" + liq6 + "\n" + liq7, freq=alert.freq_once_per_bar_close)
+
+if enableLiqLevels and shortLiq50xSweep and not shortLiq100xSweep and isFutures
+    string liq1 = "⚠️ 50x 숏 청산 스윕!"
+    string liq2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string liq3 = "━━━━━━━━━━━━━━"
+    string liq4 = "📈 50x 숏 청산 레벨 돌파 후 하락"
+    string liq5 = "🎯 청산 레벨: $" + str.tostring(liqShort50x, "#.##")
+    string liq6 = disclaimer
+    alert(liq1 + "\n" + liq2 + "\n" + liq3 + "\n" + liq4 + "\n" + liq5 + "\n" + liq6, freq=alert.freq_once_per_bar_close)
+
+// 청산 구간 접근 알림 (비활성화 - 정보성 알림이라 매매에 불필요)
+// if enableLiqLevels and nearLongLiq100x
+//     alert("⚠️ " + syminfo.basecurrency + " 100x 롱 청산 구간 접근! $" + str.tostring(close, "#.##") + " → 청산 레벨: $" + str.tostring(liqLong100x, "#.##"), freq=alert.freq_once_per_bar_close)
+
+// if enableLiqLevels and nearShortLiq100x
+//     alert("⚠️ " + syminfo.basecurrency + " 100x 숏 청산 구간 접근! $" + str.tostring(close, "#.##") + " → 청산 레벨: $" + str.tostring(liqShort100x, "#.##"), freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// 실제 청산 매물대 알림 (대형 포지션 집중 구간)
+// ============================================
+
+// 롱 대량 청산 구간 접근 알림 (비활성화 - 정보성 알림이라 매매에 불필요)
+// if enableRealLiqLevels and nearRealLongLiq1
+//     string rliq1 = "🚨 롱 대량 청산 구간 접근! 🚨"
+//     string rliq2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+//     string rliq3 = "━━━━━━━━━━━━━━"
+//     string rliq4 = "💀 대형 롱 포지션 청산 집중 구간"
+//     string rliq5 = "🎯 청산 레벨: $" + str.tostring(realLongLiq1, "#")
+//     string rliq6 = "📉 하락 시 연쇄 청산 가능!"
+//     string rliq7 = disclaimer
+//     alert(rliq1 + "\n" + rliq2 + "\n" + rliq3 + "\n" + rliq4 + "\n" + rliq5 + "\n" + rliq6 + "\n" + rliq7, freq=alert.freq_once_per_bar_close)
+
+// 숏 대량 청산 구간 접근 알림 (비활성화 - 정보성 알림이라 매매에 불필요)
+// if enableRealLiqLevels and nearRealShortLiq1
+//     string rsiq1 = "🚨 숏 대량 청산 구간 접근! 🚨"
+//     string rsiq2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+//     string rsiq3 = "━━━━━━━━━━━━━━"
+//     string rsiq4 = "💀 대형 숏 포지션 청산 집중 구간"
+//     string rsiq5 = "🎯 청산 레벨: $" + str.tostring(realShortLiq1, "#")
+//     string rsiq6 = "📈 상승 시 숏 스퀴즈 가능!"
+//     string rsiq7 = disclaimer
+//     alert(rsiq1 + "\n" + rsiq2 + "\n" + rsiq3 + "\n" + rsiq4 + "\n" + rsiq5 + "\n" + rsiq6 + "\n" + rsiq7, freq=alert.freq_once_per_bar_close)
+
+// 실제 청산 스윕 알림 (대량 청산 발생 후 반전)
+if enableRealLiqLevels and realLongLiqSweep1
+    string rls1 = "💀💀💀 롱 대량 청산 스윕! 💀💀💀"
+    string rls2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string rls3 = "━━━━━━━━━━━━━━"
+    string rls4 = "🔥 $" + str.tostring(realLongLiq1, "#") + " 롱 청산 구간 돌파 후 반등!"
+    string rls5 = "📈 대량 롱 청산 발생 → 반등 기회?"
+    string rls6 = "⚡ 강한 매수세 유입 가능"
+    string rls7 = disclaimer
+    alert(rls1 + "\n" + rls2 + "\n" + rls3 + "\n" + rls4 + "\n" + rls5 + "\n" + rls6 + "\n" + rls7, freq=alert.freq_once_per_bar_close)
+
+if enableRealLiqLevels and realShortLiqSweep1
+    string rss1 = "💀💀💀 숏 대량 청산 스윕! 💀💀💀"
+    string rss2 = syminfo.basecurrency + "/USDT " + timeframe.period + " $" + str.tostring(close, "#.##")
+    string rss3 = "━━━━━━━━━━━━━━"
+    string rss4 = "🔥 $" + str.tostring(realShortLiq1, "#") + " 숏 청산 구간 돌파 후 하락!"
+    string rss5 = "📉 대량 숏 청산 발생 → 하락 기회?"
+    string rss6 = "⚡ 강한 매도세 유입 가능"
+    string rss7 = disclaimer
+    alert(rss1 + "\n" + rss2 + "\n" + rss3 + "\n" + rss4 + "\n" + rss5 + "\n" + rss6 + "\n" + rss7, freq=alert.freq_once_per_bar_close)
+
+// ============================================
+// V40+ 변경사항 요약 (2026.01.21)
+// ============================================
+//
+// 1. CVD 정밀도 향상
+//    - CVD Reset 기능 추가 (일봉/세션/주봉)
+//    - CVD Normalization (고가 자산 대응)
+//    - 더 정확한 매수/매도압 측정
+//
+// 2. BOS/CHoCH 신뢰성 강화
+//    - 거래량 확인 필터 (bosVolumeConfirm)
+//    - 강한 종가 확인 (bosStrongClose)
+//    - 허위 돌파 감소
+//
+// 3. 필터 시스템 추가
+//    - 신호 쿨다운 (과매매 방지)
+//    - 볼륨 필터 (저거래량 제외)
+//    - 시간 필터 (비효율 세션 제외)
+//
+// 4. EMA 각도 계산 개선
+//    - Arctangent 방식 적용
+//    - Normalization (가격 독립적)
+//    - 더 정확한 추세 강도 측정
+//
+// 5. 동적 파라미터 조정
+//    - ATR 기반 적응형 시스템
+//    - 변동성에 따른 쿨다운 조정
+//    - 시장 상황에 맞춘 자동 최적화
+//
+// V40 설정 위치:
+// - Settings > V40 필터
+// - Settings > V40 CVD 개선
+// - Settings > V40 BOS 개선
+// - Settings > V40 동적 조정
+// - Settings > V40+ 청산매물대 (NEW!)
+//
+// V1.2 (2026.01.21) 청산 매물대 추가:
+// - 레버리지별 청산 레벨 표시 (10x/25x/50x/100x)
+// - 롱 청산 레벨 (빨간색) / 숏 청산 레벨 (초록색)
+// - 청산 스윕 감지 (대량 청산 후 반전 = 강한 신호)
+// - 청산 스윕 시 STRONG → SUPER 승격
+// - 청산 구간 접근/스윕 알림
+//
+// V42 Complete (2026.01.27) 하모닉 + 정확성 필터:
+// - 하모닉 패턴 감지 (Gartley, Bat, Crab, Butterfly, Cypher, 707, Shark, AB=CD)
+// - PRZ + TP/SL 자동 계산
+// - RSI BAMM 신호
+// - 정확성 필터 (품질, 추세, 거래량, RSI, 컨플루언스)
+// - 30점 점수 시스템에 하모닉 점수 반영
+// ============================================
+
+// ============================================
+// ★★★ V42 통합 알람 조건 ★★★
+// ============================================
+
+// --- 최고 정확도 알람 (권장) ---
+alertcondition(filteredHarmonicBullSignal or (strongLong and highConfidenceLong) or rsiBAMMBuy, title="[V42] ★ LONG (필터)", message=">>> LONG <<< {{ticker}} {{interval}} - 고정확 매수 신호!")
+alertcondition(filteredHarmonicBearSignal or (showShortSignals and shortDeltaScore >= 3) or rsiBAMMSell, title="[V42] ★ SHORT (필터)", message=">>> SHORT <<< {{ticker}} {{interval}} - 고정확 매도 신호!")
+
+// --- 하모닉 패턴 알람 ---
+alertcondition(filteredHarmonicSignal, title="[V42] 하모닉 (필터)", message="하모닉 패턴! {{ticker}} {{interval}} - 품질/컨플루언스 확인")
+alertcondition(filteredHarmonicBullSignal, title="[V42] Bullish 하모닉", message="Bullish 하모닉! {{ticker}} - PRZ 확인, 매수 검토")
+alertcondition(filteredHarmonicBearSignal, title="[V42] Bearish 하모닉", message="Bearish 하모닉! {{ticker}} - PRZ 확인, 매도 검토")
+alertcondition(detectedHarmonicPattern != "", title="[V42] 하모닉 (원본)", message="하모닉 패턴 감지! {{ticker}} {{interval}}")
+
+// --- RSI BAMM 알람 ---
+alertcondition(rsiBAMMBuy, title="[V42] BAMM 매수", message="RSI BAMM 매수! {{ticker}} - 다이버전스 + RSI 50 돌파")
+alertcondition(rsiBAMMSell, title="[V42] BAMM 매도", message="RSI BAMM 매도! {{ticker}} - 다이버전스 + RSI 50 하향돌파")
+
+// --- ICT/SMC 알람 ---
+alertcondition(strongLong, title="[V42] ICT LONG", message="ICT LONG 신호! {{ticker}} {{interval}} - S/A 등급")
+alertcondition(superLong, title="[V42] SUPER LONG", message="SUPER LONG! {{ticker}} {{interval}} - 모든 조건 일치")
+alertcondition(highConfidenceLong, title="[V42] 고확신 LONG", message="고확신 LONG! {{ticker}} - 높은 승률 조건 충족")
+
+// --- 고래 알람 ---
+alertcondition(whaleBuy, title="[V42] 고래 매수", message="고래 매수! {{ticker}} {{interval}} - 대량 매수세 감지")
+alertcondition(whaleSell, title="[V42] 고래 매도", message="고래 매도! {{ticker}} {{interval}} - 대량 매도세 감지")
+
+// --- 통합 알람 ---
+alertcondition(filteredHarmonicBullSignal or strongLong or rsiBAMMBuy or whaleBuy, title="[V42] 모든 롱", message="롱 신호! {{ticker}} {{interval}}")
+alertcondition(filteredHarmonicBearSignal or (showShortSignals and shortDeltaScore >= 3) or rsiBAMMSell or whaleSell, title="[V42] 모든 숏", message="숏 신호! {{ticker}} {{interval}}")
+
+

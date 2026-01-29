@@ -45,7 +45,12 @@
       "Bash(explorer \"C:\\\\Users\\\\k\\\\trading-automation\")",
       "Bash(notepad.exe \"C:\\\\Users\\\\k\\\\Desktop\\\\V40-ICT-Enhanced.pine\")",
       "Bash(node liquidation-heatmap.js:*)",
-      "Bash(where:*)"
+      "Bash(where:*)",
+      "Bash(python -c:*)",
+      "Bash(python:*)",
+      "Bash(py extract_pdf.py:*)",
+      "Bash(pip install:*)",
+      "Bash(py -m pip install:*)"
     ],
     "deny": [],
     "ask": []
