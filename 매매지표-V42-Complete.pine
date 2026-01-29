@@ -252,6 +252,10 @@ showCypher = input.bool(true, title="Cypher", inline="hpat2", group="하모닉 �
 show707 = input.bool(true, title="707", inline="hpat2", group="하모닉 패턴 선택")
 showShark = input.bool(true, title="Shark", inline="hpat3", group="하모닉 패턴 선택")
 showABCD = input.bool(true, title="AB=CD", inline="hpat3", group="하모닉 패턴 선택")
+showDeepGartley = input.bool(true, title="Deep Gartley", inline="hpat4", group="하모닉 패턴 선택")
+showDeepCrab = input.bool(true, title="Deep Crab", inline="hpat4", group="하모닉 패턴 선택")
+showAltBat = input.bool(true, title="Alt Bat", inline="hpat4", group="하모닉 패턴 선택")
+showFiveZero = input.bool(true, title="5-0", inline="hpat5", group="하모닉 패턴 선택")
 
 // RSI BAMM 설정
 showRSIBAMM = input.bool(true, title="RSI BAMM 활성화", group="RSI BAMM")
@@ -1046,6 +1050,22 @@ isHarmonicABCD(float ab, float cd) =>
     float ratio = cd / ab
     isWithinHarmonicTol(ratio, 1.0, harmonicFibTolerance) or isWithinHarmonicTol(ratio, HFIB_127, harmonicFibTolerance) or isWithinHarmonicTol(ratio, HFIB_161, harmonicFibTolerance)
 
+// Deep Gartley: B 0.588-0.648, D 0.886 (PDF 기준)
+isHarmonicDeepGartley(float xab, float xad) =>
+    xab >= 0.588 - harmonicFibTolerance/100 and xab <= 0.648 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_886, harmonicFibTolerance)
+
+// Deep Crab: B 0.886-0.936, D 1.618 (PDF 기준)
+isHarmonicDeepCrab(float xab, float xad) =>
+    xab >= 0.886 - harmonicFibTolerance/100 and xab <= 0.936 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_161, harmonicFibTolerance)
+
+// Alternate Bat: B 0.352-0.382, D 1.13 (PDF 기준)
+isHarmonicAltBat(float xab, float xad) =>
+    xab >= 0.352 - harmonicFibTolerance/100 and xab <= 0.382 + harmonicFibTolerance/100 and isWithinHarmonicTol(xad, HFIB_113, harmonicFibTolerance)
+
+// 5-0 Pattern: Shark 이후 BC의 0.5에서 반전 (PDF 기준)
+isHarmonicFiveZero(float xab, float xad, float bcRatio) =>
+    xab >= 0.382 - harmonicFibTolerance/100 and xab <= 0.618 + harmonicFibTolerance/100 and isWithinHarmonicTol(bcRatio, HFIB_50, harmonicFibTolerance)
+
 // 하모닉 스윙 포인트 수집
 var array<float> harmonicSwingHighs = array.new_float(0)
 var array<float> harmonicSwingLows = array.new_float(0)
@@ -1107,13 +1127,21 @@ findHarmonicPattern() =>
                     xacRatio = math.abs(tC - tX) / xa
                     ab = math.abs(tB - tA)
                     cd = math.abs(tD - tC)
+                    bc = math.abs(tC - tB)
+                    bcRatio = bc > 0 ? math.abs(tD - tB) / bc : 0
 
                     if showGartley and isHarmonicGartley(xabRatio, xadRatio)
                         patternName := "Gartley"
+                    else if showDeepGartley and isHarmonicDeepGartley(xabRatio, xadRatio)
+                        patternName := "Deep Gartley"
                     else if showBat and isHarmonicBat(xabRatio, xadRatio)
                         patternName := "Bat"
+                    else if showAltBat and isHarmonicAltBat(xabRatio, xadRatio)
+                        patternName := "Alt Bat"
                     else if showCrab and isHarmonicCrab(xabRatio, xadRatio)
                         patternName := "Crab"
+                    else if showDeepCrab and isHarmonicDeepCrab(xabRatio, xadRatio)
+                        patternName := "Deep Crab"
                     else if showButterfly and isHarmonicButterfly(xabRatio, xadRatio)
                         patternName := "Butterfly"
                     else if showCypher and isHarmonicCypher(xabRatio, xacRatio)
@@ -1122,6 +1150,8 @@ findHarmonicPattern() =>
                         patternName := "707"
                     else if showShark and isHarmonicShark(xabRatio, xadRatio)
                         patternName := "Shark"
+                    else if showFiveZero and isHarmonicFiveZero(xabRatio, xadRatio, bcRatio)
+                        patternName := "5-0"
                     else if showABCD and isHarmonicABCD(ab, cd)
                         patternName := "AB=CD"
 
@@ -1151,13 +1181,21 @@ findHarmonicPattern() =>
                     xacRatio = math.abs(tC - tX) / xa
                     ab = math.abs(tB - tA)
                     cd = math.abs(tD - tC)
+                    bc = math.abs(tC - tB)
+                    bcRatio = bc > 0 ? math.abs(tD - tB) / bc : 0
 
                     if showGartley and isHarmonicGartley(xabRatio, xadRatio)
                         patternName := "Gartley"
+                    else if showDeepGartley and isHarmonicDeepGartley(xabRatio, xadRatio)
+                        patternName := "Deep Gartley"
                     else if showBat and isHarmonicBat(xabRatio, xadRatio)
                         patternName := "Bat"
+                    else if showAltBat and isHarmonicAltBat(xabRatio, xadRatio)
+                        patternName := "Alt Bat"
                     else if showCrab and isHarmonicCrab(xabRatio, xadRatio)
                         patternName := "Crab"
+                    else if showDeepCrab and isHarmonicDeepCrab(xabRatio, xadRatio)
+                        patternName := "Deep Crab"
                     else if showButterfly and isHarmonicButterfly(xabRatio, xadRatio)
                         patternName := "Butterfly"
                     else if showCypher and isHarmonicCypher(xabRatio, xacRatio)
@@ -1166,6 +1204,8 @@ findHarmonicPattern() =>
                         patternName := "707"
                     else if showShark and isHarmonicShark(xabRatio, xadRatio)
                         patternName := "Shark"
+                    else if showFiveZero and isHarmonicFiveZero(xabRatio, xadRatio, bcRatio)
+                        patternName := "5-0"
                     else if showABCD and isHarmonicABCD(ab, cd)
                         patternName := "AB=CD"
 
